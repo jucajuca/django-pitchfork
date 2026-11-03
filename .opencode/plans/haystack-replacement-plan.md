@@ -130,8 +130,24 @@ pitchfork/                        # the haystack replacement (new package)
 └── compat/                       # haystack import shim (phase 8)
 ```
 
-Layering rule: `pitchfork.backends.*` may import `django_pitchfork`;
-`django_pitchfork` never imports `pitchfork` (no back-edges).
+Layering rule (revised after review): `pitchfork/backends/base.py` — the
+port of haystack's `backends/__init__.py` machinery — is the bottom of the
+dependency graph. `django_pitchfork` re-points its haystack base classes at
+it (inverting the original arrow: verified that `django_pitchfork` today
+subclasses `haystack.backends.BaseEngine/BaseSearchBackend/BaseSearchQuery`
+and calls `haystack.connections`, so as released it cannot exist without
+haystack). After the inversion:
+
+```
+pitchfork.backends.base   (no external search deps)
+        ▲
+django_pitchfork          (native engine + wire; depends only on base)
+        ▲
+pitchfork.backends.pitchfork, pitchfork.backends.whoosh, solr, es, xapian
+```
+
+No runtime haystack imports anywhere — haystack remains a **dev dependency
+only** (conformance-suite test apps + the phase 8 parity test).
 
 ## Backend scope & pins
 
@@ -161,9 +177,20 @@ then Xapian (bindings need system libs).
 - Port the backend-agnostic `test_haystack/*.py` core tests as the
   conformance base; scaffold `conformance/` suite parameterized over
   backends (single `BASE_TESTCASES` list run per backend via `__subclasses__`
-  or parametrize).
-- docker compose file (repo-root `docker-compose.yml`) for solr + es + a
-  xapian-capable image; loud-skip reporting in the runner.
+  or parametrize). Port the app-discovery edge-case apps too:
+  `discovery/`, `multipleindex/` (routers), `altered_internal_names`,
+  `app_with_hierarchy`, `app_without_models`, `app_using_appconfig` — these
+  are the UnifiedIndex registration edge cases.
+- **`BackendCaps` mechanism (review finding F3)**: each backend ships a caps
+  module declaring (a) supported IR ops (unsupported → the suite skips with
+  a loud warning) and (b) per-backend expectation overrides (spelling
+  suggestions, highlight fragment formats, tie-broken ordering differ by
+  engine — the suite consults the caps rather than asserting one universal
+  answer). The docs backend-support table is **generated** from the caps
+  modules, so the table cannot drift.
+- docker compose file at `docker/docker-compose.yml` (haystack's convention —
+  not repo root) for solr + es + a xapian-capable image; loud-skip reporting
+  in the runner.
 - **Tests**: ported core tests green against `simple` backend.
 
 ### Phase 1 — Core API layer (Python, no engines)
@@ -176,8 +203,14 @@ then Xapian (bindings need system libs).
 - **Design change**: `BaseSearchQuery` accumulates the `QueryNode` IR
   directly (add_filter/add_order_by/add_boost/build_not_query...) instead of
   backend string fragments. Keep `__str__` via an IR pretty-printer.
+- **Base-class inversion (review finding F1)**: re-point `django_pitchfork`
+  at the replacement's base classes — its `haystack.backends.*` /
+  `haystack.constants` / `haystack.models` / `haystack.utils` imports map to
+  `pitchfork.backends.base` / `pitchfork.constants` / `pitchfork.models` /
+  `pitchfork.utils`. The native backend must run with haystack uninstalled.
 - **Tests**: haystack's `test_fields.py`, `test_inputs.py`, `test_indexes.py`,
-  `test_loading.py`, `test_query.py`, `test_managers.py` ported green.
+  `test_loading.py`, `test_query.py`, `test_managers.py` ported green; the
+  native backend passes the conformance subset with haystack NOT installed.
 
 ### Phase 2 — IR completion + Wire V2
 - Extend `pitchfork-core/query_ast.rs` with the ops the native engine still
@@ -196,7 +229,8 @@ then Xapian (bindings need system libs).
   lowering, native highlighting/facets/spelling, results → normalized shape.
 - Declared gaps: MLT (approximate via terms), stats, spatial — warnings.
 - **Tests**: full conformance suite green (no service needed); haystack's
-  whoosh_tests quirks (spelling forms, fuzzy plugin) ported.
+  whoosh_tests quirks (spelling forms, fuzzy plugin) ported; verify whoosh
+  2.7.4 on py3.12–3.15 before committing to the pin.
 
 ### Phase 4 — Solr backend
 - `backends/solr.py`: pysolr; `build_solr_schema` command port (managed
@@ -212,6 +246,10 @@ then Xapian (bindings need system libs).
   filters, `highlight`, `suggest` for spelling, legacy `mlt` →
   `more_like_this` query); `geo_point` + `geo_distance`/`geo_bounding_box`;
   index templates instead of `build_schema` mappings API.
+- **Version rule (review finding F4)**: an 8.x client talking to a 7.17
+  server requires compat-mode headers and some API shapes differ. If compat
+  mode proves painful against the compose-pinned server, target 8.x servers
+  only and lower the documented floor — do not ship a three-file split.
 - **Tests**: conformance suite against docker ES 8; destructive-teardown
   guard (refuse non-test index prefixes, mirroring haystack's AGENTS warning).
 
@@ -236,19 +274,30 @@ then Xapian (bindings need system libs).
   suite covers each against ≥2 backends.
 
 ### Phase 8 — haystack compat shim
-- `pitchfork/compat/haystack/`: module mapping haystack's import surface to
-  pitchfork (`from haystack.inputs import AutoQuery` → works with
-  `import pitchfork.compat.haystack as haystack`), so adopters migrate by
-  changing one import line + settings `ENGINE`.
+- **Mechanism (review finding F2)**: `from haystack.inputs import ...`
+  cannot be redirected without an actual `haystack` distribution, and a shim
+  named `haystack` collides with the real one. Decision: the shim lives at
+  `pitchfork/compat/haystack/` and is used **explicitly** —
+  `import pitchfork.compat.haystack as haystack` — never installed as
+  `haystack`. The primary migration path remains a mechanical import-sed
+  (`haystack.` → `pitchfork.`) documented in docs/MIGRATION.md; the shim
+  covers gradual migrations only.
+- Templatetag caveat: when haystack AND pitchfork are both in
+  `INSTALLED_APPS`, Django resolves `{% load highlight %}` to the first app
+  in list order — silent ambiguity. The migration guide says to remove
+  haystack from `INSTALLED_APPS`; the replacement never coexists for reads.
 - Ship the shim's own test: import-surface parity asserted against a frozen
   list of haystack's public names.
 - **Tests**: parity test runs against the installed haystack (dev dep) and
   fails loudly when haystack grows new public names (forces review).
 
 ### Phase 9 — Hardening + release
-- Conformance matrix in CI: {6 backends} × {py 3.10–3.15} × {django 4.2–6.1}
-  with compose services; loud-skip summary; `pitchfork`-native also runs the
-  dual-mode (embedded/server) matrix from the native plan.
+- Conformance matrix in CI — **pruned (review finding F7)**: the full
+  {py 3.10–3.15} × {django 4.2–6.1} matrix runs on the native backend only;
+  every other backend runs one representative slice (one py, one django)
+  plus its compose service. Full matrix ≈ 30 jobs, not 144. Loud-skip
+  summary; `pitchfork`-native also runs the dual-mode (embedded/server)
+  matrix from the native plan.
 - Sphinx docs (`tox -e docs` style, warnings-as-errors) with the
   backend_support matrix regenerated from a source-of-truth table.
 - PyPI release of `pitchfork` (reuses the native release workflow pattern;
@@ -258,8 +307,9 @@ then Xapian (bindings need system libs).
 
 ## Non-goals
 
-- No changes to `django_pitchfork`'s public API (released; the replacement
-  wraps it).
+- No changes to `django_pitchfork`'s **public API** (released ENGINE paths
+  stay stable); its internal haystack imports re-point to
+  `pitchfork.backends.base` (review finding F1).
 - No haystack fork: haystack remains installed for the compat shim's parity
   tests only.
 - No PostgreSQL FTS backend (future work), no new engines beyond the table.
