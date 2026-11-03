@@ -1,0 +1,64 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "django-pitchfork"
+description = "Rust-powered search core for django-haystack."
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+requires-python = ">=3.10"
+dependencies = [
+    "django-haystack>=3.3",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 6.0",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dynamic = ["version"]
+
+# Bolt's packaging lessons applied:
+# - the Rust module is `django_pitchfork._core` (private submodule);
+# - extension-module is enabled only here via features, never hardcoded in
+#   Cargo.toml, so native `cargo test` can link libpython.
+[tool.maturin]
+python-source = "python"
+module-name = "django_pitchfork._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["pitchfork_tests"]
+
+[tool.coverage.run]
+source = ["python/django_pitchfork"]
+branch = true
+# Python >= 3.14 forkserver: patch fork like bolt does.
+patch = ["fork"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
+
+[tool.mutmut]
+# mutmut on the Python package (bolt's setup, phase 6).
+# Run: mutmut run --paths-to-mutate python/django_pitchfork
+paths_to_mutate = ["python/django_pitchfork/"]
+tests_dir = ["pitchfork_tests/"]

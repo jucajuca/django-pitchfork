@@ -1,0 +1,76 @@
+name: Fuzz
+
+# Weekly fuzz workflow (bolt's pattern): extended random cases on the wire
+# parser + query parser, both languages. Fixed cases run in the regular CI.
+on:
+  schedule:
+    - cron: "0 4 * * 1" # Mondays 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Extended proptest cases: 10k random ASTs/wire values per strategy.
+      - run: PROPTEST_CASES=10000 cargo test --workspace -p pitchfork-core
+      - run: PROPTEST_CASES=10000 cargo test --workspace -p pitchfork-engine
+
+  fuzz-python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install django packaging hypothesis
+          pip install -e ../django-haystack || pip install django-haystack
+      - name: Build PyO3 extension
+        run: |
+          pip install maturin
+          maturin develop
+      - name: Run Hypothesis fuzz suite (extended)
+        env:
+          DJANGO_SETTINGS_MODULE: pitchfork_tests.settings
+        run: |
+          python -m pytest pitchfork_tests/test_fuzz.py -q -p no:cacheprovider \
+            --override-ini="addopts="
+
+  mutation-rs:
+    # Mutation testing gate (cargo-mutants); monthly to keep CI time sane.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+      - name: Run mutation tests
+        run: cargo mutants --config .cargo/mutants.toml --no-shuffle -v
+
+  mutation-py:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install django packaging mutmut
+          pip install ../django-haystack || pip install django-haystack
+      - name: Run mutmut
+        run: mutmut run

@@ -1,0 +1,24 @@
+[package]
+name = "pitchfork-server"
+description = "Standalone axum HTTP search server speaking PitchforkWireV1 (Strategy C)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pitchfork-server"
+path = "src/main.rs"
+
+[dependencies]
+pitchfork-core = { path = "../pitchfork-core" }
+pitchfork-engine = { path = "../pitchfork-engine" }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { workspace = true }
+http-body-util = { workspace = true }

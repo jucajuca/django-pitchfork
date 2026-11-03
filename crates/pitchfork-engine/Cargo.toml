@@ -1,0 +1,16 @@
+[package]
+name = "pitchfork-engine"
+description = "Tantivy-backed search engine implementing the pitchfork SearchEngine trait."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pitchfork-core = { path = "../pitchfork-core" }
+tantivy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

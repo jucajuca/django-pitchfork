@@ -1,0 +1,26 @@
+# cargo-mutants configuration (bolt's setup, phase 6).
+# Run: cargo mutants --config .cargo/mutants.toml
+#
+# Mutation testing gates: every mutant that survives marks untested logic.
+# The workspace's unit + proptest suites are the killers.
+
+exclude_globs = [
+    # Wire structs are declarative; serde round trips cover them.
+    "crates/pitchfork-core/src/wire.rs::tests",
+    "crates/pitchfork-core/src/query_ast.rs::tests",
+    "crates/pitchfork-core/src/schema.rs::tests",
+    "crates/pitchfork-engine/src/lib.rs::tests",
+    "crates/pitchfork-engine/src/lib.rs::phase5_tests",
+    "crates/pitchfork-engine/src/lib.rs::date_debug*",
+    "crates/pitchfork-engine/src/spell.rs::tests",
+    "crates/pitchfork-server/src/main.rs::tests",
+    "src/lib.rs",
+]
+
+# Test timeouts: mutants that hang are caught, not waited on.
+timeout = 120.0
+
+# The server's tokio main is not unit-testable in-process.
+exclude_re = [
+    "fn main\\(\\)",
+]

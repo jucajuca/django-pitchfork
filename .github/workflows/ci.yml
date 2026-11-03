@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Lint gate: clippy -D warnings blocks tests (haystack's ruff-first pattern).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_support_matrix.py
+
+  test-rs:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ["1.83", stable]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  test-py:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Derived from pyproject.toml classifiers (see scripts/check_support_matrix.py).
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        django-version: ["4.2", "5.1", "6.1"]
+        exclude:
+          - python-version: "3.10"
+            django-version: "6.1"
+          - python-version: "3.14"
+            django-version: "4.2"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "django~=${{ matrix.django-version }}.0" packaging
+      - name: Build server binary
+        run: cargo build -p pitchfork-server
+      - name: Run backend test suite (server mode)
+        run: python pitchfork_tests/run_tests.py
+      - name: Run backend test suite (embedded mode)
+        if: matrix.python-version == '3.12' && matrix.django-version == '5.1'
+        run: |
+          pip install maturin
+          maturin develop
+          PITCHFORK_MODE=embedded python pitchfork_tests/run_tests.py
+
+  coverage:
+    # Coverage both languages (cargo-llvm-cov + pytest-cov).
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Rust coverage
+        run: cargo llvm-cov --workspace --summary-only
+      - name: Python coverage
+        run: |
+          python -m pip install --upgrade pip
+          pip install django packaging pytest-cov
+          cargo build -p pitchfork-server
+          python pitchfork_tests/run_tests.py || true
+          # Coverage config lives in pyproject.toml ([tool.coverage]).
+
+  # Free-threaded smoke test (cp314t wheel in phase 4 release builds).
+  test-py-free-threaded:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14t"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install django packaging
+      - name: Build server binary
+        run: cargo build --bin pitchfork-server
+      - name: Run backend test suite (free-threaded)
+        run: python pitchfork_tests/run_tests.py

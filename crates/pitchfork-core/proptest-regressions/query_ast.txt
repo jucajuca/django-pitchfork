@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9550675fe29f2f9e93b31102cebb710396240d5eb80d952839c342bd098c6ff6 # shrinks to node = Or { children: [Filter { field: "a", op: Exact, value: Float(-2.4645517815671194e-117) }] }
+cc f22bc9daaa902986fda121cc2b83ead82bb91e23466de1a66d5d116c30cf1d6b # shrinks to node = And { children: [Filter { field: "a", op: Exact, value: Float(-949772725.9228581) }] }

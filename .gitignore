@@ -1,0 +1,9 @@
+/target
+/.venv
+*.db
+__pycache__/
+*.pyc
+*.egg-info/
+/pitchfork-data
+# Built PyO3 extension (maturin develop output).
+python/django_pitchfork/*.so

@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pitchfork-core",
+    "crates/pitchfork-engine",
+    "crates/pitchfork-server",
+]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+rust-version = "1.75"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
+thiserror = "2.0"
+proptest = "1.5"
+tempfile = "3"
+tantivy = "0.27"
+axum = "0.8"
+tokio = { version = "1.40", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+pyo3 = "0.24"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.profiling]
+inherits = "release"
+panic = "unwind"
+debug = true
+
+# Root crate: the PyO3 extension module (Strategy B, phase 4).
+[package]
+name = "django-pitchfork"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "django_pitchfork_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pitchfork-core = { path = "crates/pitchfork-core" }
+pitchfork-engine = { path = "crates/pitchfork-engine" }
+pyo3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
