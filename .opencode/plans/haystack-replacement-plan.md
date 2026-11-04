@@ -1,18 +1,64 @@
-# Pitchfork as a Complete Haystack Replacement — Plan
+# django-pitchfork as a Complete Haystack Replacement — Plan
 
-A full reimplementation of django-haystack's public API under the **`pitchfork`**
-package, with first-class backends for every engine haystack supports —
-**pitchfork-native (Rust/Tantivy), Solr, Elasticsearch, Whoosh, Xapian** — plus
-the `simple` mock backend. Adopters replace `haystack` with `pitchfork`; the
-API, templatetags, forms, views, and management commands match 1:1.
+A full reimplementation of django-haystack's public API under the
+**`django-pitchfork`** package, with first-class backends for every engine
+haystack supports — **the native pitchfork engine (Rust/Tantivy), Solr,
+Elasticsearch, Whoosh, Xapian** — plus the `simple` mock backend. Adopters
+replace `haystack` with `django_pitchfork`; the API, templatetags, forms,
+views, and management commands match 1:1.
+
+## Two packages, not one
+
+This project is **two separately released packages**, and every naming
+decision below depends on keeping them straight:
+
+| | Engine (this repo) | Replacement (this plan) |
+|---|---|---|
+| Package | **`pitchfork`** | **`django-pitchfork`** |
+| Import | `import pitchfork` | `import django_pitchfork` |
+| PyPI | `pitchfork-engine` | `django-pitchfork` |
+| Contains | Rust/Tantivy core, wire codec, native backend, `backends.base` machinery | `SearchQuerySet`, fields, indexes, views, forms, templatetags, commands, external-engine backends |
+| Depends on | Django + (currently) haystack for base classes | **`pitchfork-engine`** |
+| Status | **shipped** (v0.1.0, this repo) | planned (this document) |
+
+```
+        django-pitchfork            ← the haystack replacement (this plan)
+        (django_pitchfork)
+                │  depends on
+                ▼
+        pitchfork-engine            ← the engine (this repo, shipped)
+        (pitchfork)
+                │  talks to
+                ▼
+        pitchfork-server  or  in-process pitchfork._core
+```
+
+The **import direction is one-way and enforced**: `django_pitchfork` imports
+`pitchfork`, never the reverse. The engine must remain usable without the
+replacement — it is what `PitchforkEngine` adopts today, before any of this
+plan exists.
+
+Names are fixed by `docs/adr/0004-engine-name-and-package-split.md` (in the
+engine repo), which supersedes ADR 0002's inverted split. Note the asymmetry:
+PyPI's `pitchfork` is held by an unrelated abandoned project, which is why the
+engine's *distribution* is `pitchfork-engine` while its *import* is
+`pitchfork`.
 
 Related (read first):
+- `docs/adr/0004-engine-name-and-package-split.md` (engine repo) — the naming
+  decision this plan implements.
 - `django-haystack/.opencode/plans/django-pitchfork-architecture.md` — the
   design principles this plan inherits.
 - `django-haystack/.opencode/plans/django-pitchfork-migration-plan.md` — the
   completed phases 0–6 (native Rust core already exists).
 - `django-haystack/.opencode/plans/rust-migration-notes-from-django-bolt.md` —
   packaging/testing lessons applied throughout.
+
+> The three `django-haystack/.opencode/plans/…` documents above are historical
+> inputs and are **not present** in the current `django-haystack` checkout
+> (verified: `ls ../django-haystack/.opencode/plans/` → no such directory).
+> Their still-relevant content is restated inline below; treat the references
+> as provenance, not as required reading.
 
 ## Evaluation: what haystack is, measured
 
@@ -51,12 +97,12 @@ property-tested as `pitchfork-core`'s `QueryNode` AST — the **single source of
 truth**:
 
 ```
-SearchQuerySet / SearchQuery (Python, shared)     — accumulates the IR directly
+SearchQuerySet / SearchQuery (django_pitchfork, Python)  — accumulates the IR directly
         │
         ▼
 QueryNode AST (pitchfork-core, Rust, proptest'd)  — ONE serialization
         │
-        ├── pitchfork native: the AST IS the wire (done, phases 0–6)
+        ├── pitchfork native: the AST IS the wire (engine, shipped phases 0–6)
         ├── Solr:     IR → solr QP params   (q, fq, facet.*, hl.*, mlt, sort)
         ├── ES:       IR → elasticsearch DSL (bool, aggs, highlight, suggest)
         ├── Whoosh:   IR → whoosh.qparser query objects
@@ -65,6 +111,10 @@ QueryNode AST (pitchfork-core, Rust, proptest'd)  — ONE serialization
         ▼
 Results normalized to one result dict shape       — shared SearchResult
 ```
+
+The IR lives **in the engine** (`pitchfork-core`), not in the replacement: the
+replacement consumes a type it does not own. That is what keeps the arrow
+one-way.
 
 Consequences:
 1. `build_query_fragment` per backend **disappears** — one `build_query_fragment`
@@ -90,20 +140,25 @@ New for the replacement:
    engine — a backend either passes it or documents a gap.
 8. **IR-first.** No backend builds queries from `SearchQuery` state directly;
    everything lowers from the IR.
-9. **External services are loud.** Like the pitchfork test suite: services we
+9. **External services are loud.** Like the engine's test suite: services we
    own (pitchfork-server, Whoosh/Xapian file-based) never skip; Solr/ES run in
    CI via docker compose and skip **with a loud summary line** locally when
    unreachable (inverting haystack's silent-skip problem flagged in its
    AGENTS.md).
+10. **Two packages, one arrow.** `django_pitchfork` depends on `pitchfork`; the
+    engine never imports the replacement. Packaging, CI and docs keep the two
+    release trains independent — the engine ships on its own cadence and must
+    stay installable alone.
 
 ## Package layout
 
-Same repo; a new top-level package. `django_pitchfork/` stays the native
-backend (it is already released under that name); `pitchfork/` is the
-replacement API and wraps it.
+**Separate repo, separate package.** The replacement is *not* a new directory
+inside the engine repo — it is its own project (`django-pitchfork`) that
+installs `pitchfork-engine` as a dependency. The engine repo gains nothing from
+this plan.
 
 ```
-pitchfork/                        # the haystack replacement (new package)
+django_pitchfork/                  # the haystack replacement (new repo; dist: django-pitchfork)
 ├── __init__.py                   # public API re-exports (indexes, query, fields...)
 ├── fields.py                     # port of haystack/fields.py (19 classes)
 ├── inputs.py                     # port incl. AltParser (per-backend hook)
@@ -119,8 +174,9 @@ pitchfork/                        # the haystack replacement (new package)
 │                                 #   app_loading, geo, highlighting, log
 ├── backends/
 │   ├── __init__.py               # BaseEngine, BaseSearchBackend, SearchNode/SQ,
-│   │                             #   shared IR build_query_fragment, connections
-│   ├── pitchfork.py              # wraps django_pitchfork (native core, done)
+│   │                             #   shared IR build_query_fragment, connections —
+│   │                             #   subclassing the engine's pitchfork.backends.base
+│   ├── pitchfork.py              # wraps the pitchfork engine (native, shipped)
 │   ├── whoosh.py                 # pure Python, no service
 │   ├── solr.py                   # pysolr
 │   ├── elasticsearch.py          # elasticsearch-py 7/8+ (no version split)
@@ -130,30 +186,55 @@ pitchfork/                        # the haystack replacement (new package)
 └── compat/                       # haystack import shim (phase 8)
 ```
 
-Layering rule (revised after review): `pitchfork/backends/base.py` — the
-port of haystack's `backends/__init__.py` machinery — is the bottom of the
-dependency graph. `django_pitchfork` re-points its haystack base classes at
-it (inverting the original arrow: verified that `django_pitchfork` today
-subclasses `haystack.backends.BaseEngine/BaseSearchBackend/BaseSearchQuery`
-and calls `haystack.connections`, so as released it cannot exist without
-haystack). After the inversion:
+Note that `pitchfork.py` here is a *thin adapter over the engine's existing
+`pitchfork.backends.*`* — the Rust core, wire codec and dual embedded/server
+modes are already shipped in `pitchfork-engine` and are not re-implemented.
+
+### Layering rule
+
+The engine's `pitchfork.backends.base` — which today subclasses haystack's
+`BaseEngine`/`BaseSearchBackend`/`BaseSearchQuery` — is the seam. Phase 1 moves
+that machinery **down into the engine** so that the engine no longer requires
+haystack at runtime, and `django_pitchfork` builds on it:
 
 ```
-pitchfork.backends.base   (no external search deps)
+pitchfork.backends.base    (ENGINE repo; haystack-free after Phase 1)
+        ▲  subclassed by
+django_pitchfork.backends.* (replacement: pitchfork-native, whoosh, solr, es, xapian, simple)
         ▲
-django_pitchfork          (native engine + wire; depends only on base)
-        ▲
-pitchfork.backends.pitchfork, pitchfork.backends.whoosh, solr, es, xapian
+django_pitchfork.query / indexes / views / forms / templatetags
 ```
 
-No runtime haystack imports anywhere — haystack remains a **dev dependency
-only** (conformance-suite test apps + the phase 8 parity test).
+Ownership of the shared machinery, after Phase 1:
+
+| Machinery | Lives in | Import path |
+|---|---|---|
+| `BaseEngine`, `BaseSearchBackend`, `BaseSearchQuery`, `SearchNode`/`SQ`, `connections`, `UnifiedIndex` | **engine** | `pitchfork.backends.base` |
+| `constants`, `SearchResult`, model/identifier utils | **engine** | `pitchfork.constants`, `pitchfork.models`, `pitchfork.utils` |
+| `SearchQuerySet` (public chainable API), fields, inputs, indexes, views, forms, templatetags, commands | **replacement** | `django_pitchfork.*` |
+| Per-engine lowering + backends | **replacement** | `django_pitchfork.backends.*` |
+
+The split is deliberate: the low-level plumbing haystack hides in
+`backends/__init__.py` is engine-shaped (it is what the native backends already
+subclass today), while everything a haystack user actually imports
+(`SearchQuerySet`, `SearchIndex`, `{% load highlight %}`) belongs to the
+replacement.
+
+Consequences:
+
+- The engine (`pitchfork`) loses its runtime haystack dependency; haystack
+  becomes a **dev dependency of both repos** (conformance-suite test apps + the
+  phase 8 parity test).
+- The replacement never re-exports or vendors the Rust core: it calls the
+  engine.
+- `django_pitchfork` may require a *minimum* `pitchfork-engine` version; the
+  engine never knows the replacement exists.
 
 ## Backend scope & pins
 
 | Backend    | Client              | Pin (verify at impl)     | Service in CI |
 |---|---|---|---|
-| pitchfork  | in-repo             | —                        | own fixture (never skips) |
+| pitchfork (native) | `pitchfork-engine` (this project) | `>=0.1`            | own fixture (never skips) |
 | Whoosh     | whoosh              | `>=2.7,<3` (unmaintained)| none (file-based) |
 | Solr       | pysolr              | `>=3.9,<5`               | docker compose (solr:9, core `collection1`) |
 | Elasticsearch | elasticsearch-py | `>=7.17,<9` (7/8 only)   | docker compose (es:8) — destructive teardown, never point at real clusters |
@@ -171,9 +252,16 @@ Ordering rationale: Whoosh first (pure Python, no service, fastest
 conformance loop), then Solr (most complete reference backend), then ES,
 then Xapian (bindings need system libs).
 
+**Repo ownership.** Phases 1 and 2 are the only ones that touch the engine
+repo (`pitchfork-engine`); every other phase is replacement-repo work. The two
+engine phases are sequenced first because the replacement cannot subclass
+`pitchfork.backends.base` (Phase 1) or express the full IR (Phase 2) until
+they land and are released.
+
 ### Phase 0 — Foundations
-- `pitchfork/` package skeleton + public-API re-export surface; pyproject
-  entry (extras: `pitchfork[solr]`, `[elasticsearch]`, `[xapian]`).
+- `django_pitchfork/` package skeleton + public-API re-export surface; pyproject
+  entry (dist `django-pitchfork`; extras: `django-pitchfork[solr]`,
+  `[elasticsearch]`, `[xapian]`; hard dependency `pitchfork-engine>=0.1`).
 - Port the backend-agnostic `test_haystack/*.py` core tests as the
   conformance base; scaffold `conformance/` suite parameterized over
   backends (single `BASE_TESTCASES` list run per backend via `__subclasses__`
@@ -203,16 +291,31 @@ then Xapian (bindings need system libs).
 - **Design change**: `BaseSearchQuery` accumulates the `QueryNode` IR
   directly (add_filter/add_order_by/add_boost/build_not_query...) instead of
   backend string fragments. Keep `__str__` via an IR pretty-printer.
-- **Base-class inversion (review finding F1)**: re-point `django_pitchfork`
-  at the replacement's base classes — its `haystack.backends.*` /
-  `haystack.constants` / `haystack.models` / `haystack.utils` imports map to
-  `pitchfork.backends.base` / `pitchfork.constants` / `pitchfork.models` /
-  `pitchfork.utils`. The native backend must run with haystack uninstalled.
+- **Base-class move-down (review finding F1)**: `pitchfork.backends.base`
+  (engine repo) currently imports `haystack.backends.*`, `haystack.constants`,
+  `haystack.models` and `haystack.utils`. Phase 1 replaces those with
+  engine-owned equivalents (`pitchfork.base`, `pitchfork.constants`,
+  `pitchfork.models`, `pitchfork.utils`) so the **engine runs with haystack
+  uninstalled**. `django_pitchfork` then subclasses those, and its own
+  `haystack.*` vocabulary is filled by `django_pitchfork.*`.
+- **Engine change, released separately**: together with Phase 2 this is one of
+  the two engine-repo phases. It lands there first, as a `pitchfork-engine`
+  minor version (dropping a runtime dependency does not change the backends'
+  behaviour, but it *is* an API change for anyone importing
+  `pitchfork.backends.base`, so call it out in the engine's changelog), and
+  `django-pitchfork` pins `>=` that version.
 - **Tests**: haystack's `test_fields.py`, `test_inputs.py`, `test_indexes.py`,
   `test_loading.py`, `test_query.py`, `test_managers.py` ported green; the
   native backend passes the conformance subset with haystack NOT installed.
+  **Both repos assert this**: the engine's own suite gains a "haystack not
+  importable" job, and `django_pitchfork`'s CI runs with haystack absent except
+  in the phase 8 parity job.
 
-### Phase 2 — IR completion + Wire V2
+### Phase 2 — IR completion + Wire V2 (engine repo)
+- **Lands in the engine repo**, not the replacement: this is the second (and
+  last) engine-side phase. Requires a `pitchfork-engine` minor bump and a
+  `WIRE_VERSION` bump; the engine's own suite must stay green on V2 before
+  `django-pitchfork` may depend on it.
 - Extend `pitchfork-core/query_ast.rs` with the ops the native engine still
   lacks: `boost`, `stats`/`stats_facets`, `date_facets`, `query_facets`,
   `autocomplete`, MLT params (min_doc_freq/term fields), distance
@@ -277,12 +380,12 @@ then Xapian (bindings need system libs).
 - **Mechanism (review finding F2)**: `from haystack.inputs import ...`
   cannot be redirected without an actual `haystack` distribution, and a shim
   named `haystack` collides with the real one. Decision: the shim lives at
-  `pitchfork/compat/haystack/` and is used **explicitly** —
-  `import pitchfork.compat.haystack as haystack` — never installed as
+  `django_pitchfork/compat/haystack/` and is used **explicitly** —
+  `import django_pitchfork.compat.haystack as haystack` — never installed as
   `haystack`. The primary migration path remains a mechanical import-sed
-  (`haystack.` → `pitchfork.`) documented in docs/MIGRATION.md; the shim
-  covers gradual migrations only.
-- Templatetag caveat: when haystack AND pitchfork are both in
+  (`haystack.` → `django_pitchfork.`) documented in the replacement repo's
+  migration guide; the shim covers gradual migrations only.
+- Templatetag caveat: when haystack AND `django_pitchfork` are both in
   `INSTALLED_APPS`, Django resolves `{% load highlight %}` to the first app
   in list order — silent ambiguity. The migration guide says to remove
   haystack from `INSTALLED_APPS`; the replacement never coexists for reads.
@@ -296,22 +399,29 @@ then Xapian (bindings need system libs).
   {py 3.10–3.15} × {django 4.2–6.1} matrix runs on the native backend only;
   every other backend runs one representative slice (one py, one django)
   plus its compose service. Full matrix ≈ 30 jobs, not 144. Loud-skip
-  summary; `pitchfork`-native also runs the dual-mode (embedded/server)
-  matrix from the native plan.
+  summary; the `pitchfork`-native backend also runs the dual-mode
+  (embedded/server) matrix, driven from the engine's existing CI.
 - Sphinx docs (`tox -e docs` style, warnings-as-errors) with the
   backend_support matrix regenerated from a source-of-truth table.
-- PyPI release of `pitchfork` (reuses the native release workflow pattern;
-  extras for client libs).
+- PyPI release of `django-pitchfork` (dist name `django-pitchfork`, import
+  `django_pitchfork`). Separate release train from `pitchfork-engine`:
+  distinct repo, distinct tag namespace, `pitchfork-engine>=X` floor bumped
+  deliberately. Reuses the engine's release-workflow pattern; extras for
+  client libs.
 - Benchmarks: conformance suite runtime per backend recorded
-  (BENCHMARK.md pattern); native remains the perf baseline.
+  (BENCHMARK.md pattern); the native backend remains the perf baseline.
 
 ## Non-goals
 
-- No changes to `django_pitchfork`'s **public API** (released ENGINE paths
-  stay stable); its internal haystack imports re-point to
-  `pitchfork.backends.base` (review finding F1).
+- **No changes to the engine's search behaviour or wire protocol.** The one
+  engine-side change is Phase 1's haystack-import removal in
+  `pitchfork.backends.base`; the `pitchfork.backends.server` /
+  `pitchfork.backends.embedded` ENGINE paths and their options stay as shipped.
+- **No merging of the two packages.** `django-pitchfork` is never vendored
+  into this repo and `pitchfork-engine` never grows replacement code; the
+  replacement depends on the engine, not the other way round.
 - No haystack fork: haystack remains installed for the compat shim's parity
-  tests only.
+  tests only (a dev dependency of both repos).
 - No PostgreSQL FTS backend (future work), no new engines beyond the table.
 - No ORM/query integration beyond haystack's existing surface.
 
@@ -324,6 +434,7 @@ then Xapian (bindings need system libs).
 | ES client 7/8 drift vs haystack's 3-file split | One backend, 7.17 floor; compose-pinned server version |
 | Xapian needs system libs (GeoDjango-class problem) | docker image for CI; loud-skip locally with install hint |
 | IR can't express an engine feature (e.g. ES `_all` fuzziness, Solr stats) | IR ops are additive; backend declares unsupported-with-warning; gap table in docs is generated from the IR |
-| Two packages drifting (`pitchfork` vs `django_pitchfork`) | One-way import rule (no back-edges); CI enforces via import-linter |
+| Two packages drifting (`django_pitchfork` vs `pitchfork`) | One-way import rule (no back-edges); CI enforces via import-linter in the replacement repo; the engine repo has no knowledge of the replacement |
+| Engine and replacement release out of step (`django-pitchfork` needs a feature the pinned engine lacks) | `django-pitchfork` declares a `pitchfork-engine>=X` floor it was tested against; bumping is an explicit, reviewed change, never an open range |
 | AltParser/`raw_search` bypass the IR | Allowed by design; each backend documents its raw syntax; conformance suite keeps raw tests per backend |
 | Silent test skips (haystack's known problem) | Runner prints a loud skip summary and fails CI if an owned service (pitchfork fixture, Whoosh/Xapian) is unavailable |

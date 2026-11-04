@@ -1,5 +1,17 @@
 # Rename `django_pitchfork` → `pitchfork` — Plan
 
+> **Status: DONE** (commit `f14c974`, branch `rename/pitchfork`; repo now
+> located at `~/projects/DJANGO/pitchfork-engine`). Kept as the record of the
+> rename. The decisions below were executed as written, with one correction:
+> the repo directory is **`pitchfork-engine`**, not `pitchfork` — the local
+> checkout is named after the PyPI distribution to match the sibling
+> `django-haystack` convention, so `~/projects/DJANGO/` reads
+> `pitchfork-engine/` + `django-haystack/`.
+>
+> The forward-looking half of this document (Phases 4–5) was completed by
+> `docs/adr/0004-engine-name-and-package-split.md` and the naming flip in
+> `.opencode/plans/haystack-replacement-plan.md`.
+
 Rename the engine shipped by this repo from **`django-pitchfork`** to
 **`pitchfork`**, and reserve **`django-pitchfork`** for the *future*
 haystack-replacement API package.
@@ -9,7 +21,8 @@ This inverts the naming in `docs/adr/0002-two-packages-inverted-dependency.md`
 `pitchfork`). New dependency arrow, which is the natural one:
 
 ```
-pitchfork                      this repo: Rust engine + wire + haystack backends
+pitchfork-engine               this repo (import: pitchfork) —
+                               Rust engine + wire + haystack backends
         ▲
 django-pitchfork               future project: haystack-replacement API
                                (imports pitchfork; not built here)
@@ -31,6 +44,7 @@ Related:
 | Root Cargo package | `django-pitchfork` | `pitchfork` |
 | Root crate lib name | `django_pitchfork_core` | `pitchfork_py` (see R1) |
 | Repo / GitHub | `jucajuca/django-pitchfork` | `jucajuca/pitchfork` (see D2) |
+| Local checkout | `~/projects/DJANGO/django-pitchfork` | `~/projects/DJANGO/pitchfork-engine` (**done**) |
 | Future replacement API | `pitchfork` | `django-pitchfork` |
 
 **Unchanged on purpose** (no churn, no wire bump):
