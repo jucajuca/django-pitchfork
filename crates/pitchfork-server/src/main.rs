@@ -44,7 +44,10 @@ pub fn build_router(data_dir: impl Into<std::path::PathBuf>) -> Router {
         .with_state(state)
 }
 
-fn check_wire(headers: &HeaderMap, body_v: u32) -> Result<(), (StatusCode, Json<SearchResponseV1>)> {
+fn check_wire(
+    headers: &HeaderMap,
+    body_v: u32,
+) -> Result<(), (StatusCode, Json<SearchResponseV1>)> {
     if body_v != WIRE_VERSION {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -137,9 +140,11 @@ async fn search(
     check_wire(&headers, req.v)?;
     let engine = state.engine.read().await.clone();
     match engine {
-        Some(engine) => Ok(Json(engine.search(&req).unwrap_or_else(|e| {
-            SearchResponseV1::error(e.to_string())
-        }))),
+        Some(engine) => {
+            Ok(Json(engine.search(&req).unwrap_or_else(|e| {
+                SearchResponseV1::error(e.to_string())
+            })))
+        }
         None => Ok(Json(SearchResponseV1::error(
             "no schema registered; POST /setup first",
         ))),
@@ -154,11 +159,17 @@ async fn index(
     check_wire_ack(&headers, req.v)?;
     let engine = state.engine.read().await.clone();
     match engine {
-        Some(engine) => Ok(Json(engine.index(&req).unwrap_or_else(|e| {
-            AckResponseV1::error(e.to_string())
-        }))),
+        Some(engine) => Ok(Json(
+            engine
+                .index(&req)
+                .unwrap_or_else(|e| AckResponseV1::error(e.to_string())),
+        )),
         None => {
-            // An index request before setup registers the schema itself.
+            // An index request before setup registers the schema itself
+            // (P1-4: the result of that first indexing must propagate —
+            // a failed batch must NOT ack ok, and must NOT register the
+            // engine, or later searches would silently run against a
+            // half-registered schema).
             let engine = TantivyEngine::new((*state.data_dir).clone())
                 .and_then(|e| {
                     e.setup(&req.schema)?;
@@ -170,16 +181,24 @@ async fn index(
                         Json(AckResponseV1::error(e.to_string())),
                     )
                 })?;
-            let _ack = engine.index(&req).unwrap_or_else(|e| {
-                AckResponseV1::error(e.to_string())
-            });
-            *state.engine.write().await = Some(Arc::new(engine));
-            Ok(Json(AckResponseV1 {
-                v: WIRE_VERSION,
-                ok: true,
-                schema_fp: Some(req.schema.fingerprint()),
-                error: None,
-            }))
+            // Register the engine first so `engine.index` sees its own
+            // compiled state; on failure, roll the registration back
+            // (P1-4: never ack ok on a failed first batch, never keep a
+            // half-registered schema).
+            let engine = Arc::new(engine);
+            *state.engine.write().await = Some(engine.clone());
+            let mut ack = engine
+                .index(&req)
+                .unwrap_or_else(|e| AckResponseV1::error(e.to_string()));
+            // The engine — not this handler — owns the fingerprint
+            // (P1-4: return the engine-computed fingerprint).
+            if ack.ok {
+                ack.schema_fp = engine.schema_fp();
+                Ok(Json(ack))
+            } else {
+                *state.engine.write().await = None;
+                Ok(Json(ack))
+            }
         }
     }
 }
@@ -192,9 +211,11 @@ async fn remove(
     check_wire_ack(&headers, req.v)?;
     let engine = state.engine.read().await.clone();
     match engine {
-        Some(engine) => Ok(Json(engine.remove(&req).unwrap_or_else(|e| {
-            AckResponseV1::error(e.to_string())
-        }))),
+        Some(engine) => Ok(Json(
+            engine
+                .remove(&req)
+                .unwrap_or_else(|e| AckResponseV1::error(e.to_string())),
+        )),
         None => Ok(Json(AckResponseV1::error(
             "no schema registered; POST /setup first",
         ))),
@@ -209,9 +230,11 @@ async fn clear(
     check_wire_ack(&headers, req.v)?;
     let engine = state.engine.read().await.clone();
     match engine {
-        Some(engine) => Ok(Json(engine.clear().unwrap_or_else(|e| {
-            AckResponseV1::error(e.to_string())
-        }))),
+        Some(engine) => Ok(Json(
+            engine
+                .clear(&req)
+                .unwrap_or_else(|e| AckResponseV1::error(e.to_string())),
+        )),
         None => Ok(Json(AckResponseV1::error(
             "no schema registered; POST /setup first",
         ))),
@@ -227,13 +250,10 @@ async fn more_like_this(
     let engine = state.engine.read().await.clone();
     match engine {
         Some(engine) => {
-            let doc_id = req
-                .mlt_doc_id
-                .clone()
-                .unwrap_or_default();
-            Ok(Json(engine.more_like_this(&doc_id, &req).unwrap_or_else(|e| {
-                SearchResponseV1::error(e.to_string())
-            })))
+            let doc_id = req.mlt_doc_id.clone().unwrap_or_default();
+            Ok(Json(engine.more_like_this(&doc_id, &req).unwrap_or_else(
+                |e| SearchResponseV1::error(e.to_string()),
+            )))
         }
         None => Ok(Json(SearchResponseV1::error(
             "no schema registered; POST /setup first",
@@ -241,7 +261,10 @@ async fn more_like_this(
     }
 }
 
-fn check_wire_ack(headers: &HeaderMap, body_v: u32) -> Result<(), (StatusCode, Json<AckResponseV1>)> {
+fn check_wire_ack(
+    headers: &HeaderMap,
+    body_v: u32,
+) -> Result<(), (StatusCode, Json<AckResponseV1>)> {
     if body_v != WIRE_VERSION {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -308,7 +331,10 @@ mod tests {
     fn doc(id: &str, name: &str) -> BTreeMap<String, WireValue> {
         let mut m = BTreeMap::new();
         m.insert("id".to_string(), WireValue::Str(id.into()));
-        m.insert("django_ct".to_string(), WireValue::Str("core.mockmodel".into()));
+        m.insert(
+            "django_ct".to_string(),
+            WireValue::Str("core.mockmodel".into()),
+        );
         m.insert("django_id".to_string(), WireValue::Str("1".into()));
         m.insert("name".to_string(), WireValue::Str(name.into()));
         m.insert("text".to_string(), WireValue::Str("hello world".into()));
@@ -324,7 +350,10 @@ mod tests {
             v: WIRE_VERSION,
             schema_fp: Some(schema.fingerprint()),
             schema: schema.clone(),
-            docs: vec![doc("core.mockmodel.1", "daniel"), doc("core.mockmodel.2", "david")],
+            docs: vec![
+                doc("core.mockmodel.1", "daniel"),
+                doc("core.mockmodel.2", "david"),
+            ],
         };
         let response = app
             .clone()
@@ -375,9 +404,10 @@ mod tests {
             facets: vec![],
             highlight: false,
             spellcheck: false,
-            mlt_doc_id: None,
+            facet_scan_limit: None,
             spelling_query: None,
             spatial: None,
+            mlt_doc_id: None,
         };
         let resp = post_json(&app, "/search", serde_json::to_value(&search_req).unwrap()).await;
         eprintln!("search response: {resp:?}");
@@ -422,9 +452,10 @@ mod tests {
             facets: vec![],
             highlight: false,
             spellcheck: false,
-            mlt_doc_id: None,
+            facet_scan_limit: None,
             spelling_query: None,
             spatial: None,
+            mlt_doc_id: None,
         };
         let resp = post_json(&app, "/search", serde_json::to_value(&search_req).unwrap()).await;
         assert_eq!(resp["kind"], 2);
@@ -453,9 +484,10 @@ mod tests {
             facets: vec![],
             highlight: false,
             spellcheck: false,
-            mlt_doc_id: None,
+            facet_scan_limit: None,
             spelling_query: None,
             spatial: None,
+            mlt_doc_id: None,
         };
         let resp = post_json(&app, "/search", serde_json::to_value(&search_req).unwrap()).await;
         assert_eq!(resp["total"], 1);
@@ -491,5 +523,76 @@ mod tests {
         let health: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(health["v"], 1);
         assert_eq!(health["status"], "ok");
+    }
+
+    /// P1-4: a first `/index` batch that fails must NOT ack ok and must
+    /// NOT register the schema (previously: `ok: true` plus a registered
+    /// engine, i.e. silent data loss).
+    #[tokio::test]
+    async fn failed_first_index_batch_is_not_ok_and_not_registered() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let schema = fixture_schema();
+        let app = build_router(dir.path());
+
+        // A document missing the required reserved identifier fields makes
+        // the batch fail inside the engine.
+        let mut bad_doc: BTreeMap<String, WireValue> = BTreeMap::new();
+        bad_doc.insert("name".into(), WireValue::Str("daniel".into()));
+        let req = IndexRequestV1 {
+            v: WIRE_VERSION,
+            schema_fp: Some(schema.fingerprint()),
+            schema: schema.clone(),
+            docs: vec![doc("core.mockmodel.1", "daniel"), bad_doc],
+        };
+        let resp = post_json(&app, "/index", serde_json::to_value(&req).unwrap()).await;
+        assert_eq!(resp["ok"], false, "failed batch must not ack ok: {resp}");
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap()
+                .contains("missing required field"),
+            "engine error must surface: {resp}"
+        );
+
+        // The engine must not stay registered with the failed schema.
+        let search_req = SearchRequestV1 {
+            v: WIRE_VERSION,
+            schema_fp: schema.fingerprint(),
+            ast: QueryNode::MatchAll,
+            start: 0,
+            end: Some(10),
+            sort: vec![],
+            facets: vec![],
+            highlight: false,
+            spellcheck: false,
+            facet_scan_limit: None,
+            spelling_query: None,
+            spatial: None,
+            mlt_doc_id: None,
+        };
+        let resp = post_json(&app, "/search", serde_json::to_value(&search_req).unwrap()).await;
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap()
+                .contains("no schema registered"),
+            "engine must not be registered after a failed first batch: {resp}"
+        );
+
+        // A good batch afterwards still works end-to-end.
+        let req = IndexRequestV1 {
+            v: WIRE_VERSION,
+            schema_fp: Some(schema.fingerprint()),
+            schema: schema.clone(),
+            docs: vec![doc("core.mockmodel.1", "daniel")],
+        };
+        let resp = post_json(&app, "/index", serde_json::to_value(&req).unwrap()).await;
+        assert_eq!(resp["ok"], true, "{resp}");
+        // P1-4: the ack carries the engine-computed fingerprint.
+        assert_eq!(
+            resp["schema_fp"].as_str().unwrap(),
+            schema.fingerprint(),
+            "engine-computed fingerprint must be returned: {resp}"
+        );
     }
 }

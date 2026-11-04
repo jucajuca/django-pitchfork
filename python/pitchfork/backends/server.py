@@ -18,6 +18,7 @@ from haystack.utils import get_identifier, get_model_ct
 from haystack.utils.app_loading import haystack_get_model
 
 from ..exceptions import PitchforkError
+from .. import wire as wire_v1
 from . import base as adapter_base
 from .base import PitchforkClient, build_ast, encode_wire_value
 
@@ -28,6 +29,13 @@ class ResultProcessingMixin:
     Both modes decode identical PitchforkWireV1 responses, so this mixin
     exercises the same protocol contract and it cannot drift."""
 
+    # P2-2: these names are positional or reserved kwargs on haystack's
+    # SearchResult constructor; a stored field with one of these names must
+    # not be splatted through `**additional_fields`.
+    RESERVED_RESULT_FIELDS = frozenset(
+        {"score", "app_label", "model_name", "pk", "_distance", "_point_of_origin"}
+    )
+
     def _decode_query(self, query_string):
         """Our build_query() emits JSON ASTs; raw query strings (raw_search)
         fall back to a full-text content lookup."""
@@ -36,7 +44,7 @@ class ResultProcessingMixin:
         except (ValueError, TypeError):
             decoded = None
         if isinstance(decoded, dict) and "node" in decoded:
-            return decoded
+            return self._map_content_fields(decoded)
         return {
             "node": "filter",
             "field": self.content_field_name,
@@ -44,14 +52,46 @@ class ResultProcessingMixin:
             "value": str(query_string),
         }
 
-    def _process_results(self, response, highlight=False, result_class=None):
-        from haystack import connections
+    def _map_content_fields(self, node):
+        """P0-2: map the haystack ``content`` pseudo-field onto the index's
+        document field, recursively over AND/OR/NOT nodes (whoosh maps
+        ``content`` to ``index_fieldname = ""``/"no special field")."""
+        if node.get("node") == "filter" and node.get("field") in ("content", ""):
+            mapped = dict(node)
+            mapped["field"] = self.content_field_name
+            return mapped
+        if "children" in node:
+            mapped = dict(node)
+            mapped["children"] = [self._map_content_fields(c) for c in node["children"]]
+            return mapped
+        if "child" in node:
+            mapped = dict(node)
+            mapped["child"] = self._map_content_fields(node["child"])
+            return mapped
+        return node
 
-        if result_class is None:
-            result_class = SearchResult
+    def _resolve_model_and_index(self, app_label, model_name):
+        """P1-6 seam: resolve a wire ``django_ct`` pair to ``(model, index)``.
+
+        Injectable so the engine can run query-time results processing
+        without haystack (replacement-plan Phase 1); the default resolves
+        through haystack's UnifiedIndex. Returns ``(model, index)`` with
+        either possibly ``None``.
+        """
+        from haystack import connections
+        from haystack.utils.app_loading import haystack_get_model
 
         unified_index = connections[self.connection_alias].get_unified_index()
-        indexed_models = unified_index.get_indexed_models()
+        model = haystack_get_model(app_label, model_name)
+        if not model:
+            return None, None
+        if model not in unified_index.get_indexed_models():
+            return model, None
+        return model, unified_index.get_index(model)
+
+    def _process_results(self, response, highlight=False, result_class=None):
+        if result_class is None:
+            result_class = SearchResult
 
         results = []
         hits = response.get("total", 0)
@@ -61,18 +101,32 @@ class ResultProcessingMixin:
             facets["fields"][field_name] = [
                 (value, count) for (value, count) in pairs
             ]
+        # P0-5: the engine flags facet counts that only cover a prefix of
+        # the match set (facet_scan_limit reached).
+        if response.get("facets_truncated"):
+            facets["truncated"] = True
 
         for hit in response.get("hits", []):
             app_label, model_name = hit["django_ct"].split(".")
             score = hit.get("score") or 0
-            model = haystack_get_model(app_label, model_name)
+            model, index = self._resolve_model_and_index(app_label, model_name)
 
-            if model and model in indexed_models:
-                index = unified_index.get_index(model)
+            if index is not None:
                 # SearchResult.id comes from the stored identifier field
                 # (whoosh passes it through the same way).
                 additional_fields = {"id": hit["id"]}
                 for key, value in hit.get("stored", {}).items():
+                    # P2-2: haystack's SearchResult reserves these kwargs;
+                    # splatting a stored field named `score` would raise
+                    # `TypeError ... got multiple values`. Fail with a
+                    # warning instead, like a loud backend should.
+                    if key in self.RESERVED_RESULT_FIELDS:
+                        self.log.warning(
+                            "Stored field '%s' collides with a reserved "
+                            "SearchResult name; value dropped from result "
+                            "(%s.%s)" % (key, app_label, model_name),
+                        )
+                        continue
                     if key in index.fields and hasattr(index.fields[key], "convert"):
                         if index.fields[key].is_multivalued:
                             additional_fields[key] = list(value or [])
@@ -80,21 +134,31 @@ class ResultProcessingMixin:
                             additional_fields[key] = index.fields[key].convert(value)
                     else:
                         additional_fields[key] = self._to_python(value)
-
-                if highlight and hit.get("snippets"):
-                    additional_fields["highlighted"] = {
-                        field: list(fragments)
-                        for field, fragments in hit["snippets"].items()
-                    }
-
-                result = result_class(
-                    app_label,
-                    model_name,
-                    hit["django_id"],
-                    score,
-                    **additional_fields,
+            else:
+                self.log.warning(
+                    "No index for model '%s.%s'; results returned without "
+                    "field conversion" % (app_label, model_name),
                 )
-                results.append(result)
+                additional_fields = {"id": hit["id"]}
+                for key, value in hit.get("stored", {}).items():
+                    if key in self.RESERVED_RESULT_FIELDS:
+                        continue
+                    additional_fields[key] = self._to_python(value)
+
+            if highlight and hit.get("snippets"):
+                additional_fields["highlighted"] = {
+                    field: list(fragments)
+                    for field, fragments in hit["snippets"].items()
+                }
+
+            result = result_class(
+                app_label,
+                model_name,
+                hit["django_id"],
+                score,
+                **additional_fields,
+            )
+            results.append(result)
 
         spelling_suggestion = response.get("spelling")
 
@@ -171,7 +235,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
         ack = self.client.post(
             "/setup",
             {
-                "v": 1,
+                "v": wire_v1.WIRE_VERSION,
                 "schema_fp": None,
                 "schema": self.schema_definition,
                 "docs": [],
@@ -220,7 +284,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
         self.client.post(
             "/index",
             {
-                "v": 1,
+                "v": wire_v1.WIRE_VERSION,
                 "schema_fp": self.schema_fp,
                 "schema": self.schema_definition,
                 "docs": docs,
@@ -234,7 +298,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
         doc_id = get_identifier(obj_or_string)
         self.client.post(
             "/remove",
-            {"v": 1, "schema_fp": self.schema_fp, "ids": [doc_id]},
+            {"v": wire_v1.WIRE_VERSION, "schema_fp": self.schema_fp, "ids": [doc_id]},
             expected="ack",
         )
 
@@ -251,7 +315,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
 
         self.client.post(
             "/clear",
-            {"v": 1, "schema_fp": self.schema_fp},
+            {"v": wire_v1.WIRE_VERSION, "schema_fp": self.schema_fp},
             expected="ack",
         )
 
@@ -289,6 +353,34 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
         **kwargs,
     ):
         self._require_setup()
+
+        if distance_point is not None:
+            # P1-2: accepted-but-ignored features must be loud. V1 has no
+            # distance annotation support (see MIGRATION.md).
+            warnings.warn(
+                "Pitchfork does not compute distances yet; `distance_point` "
+                "is ignored and results carry no `_distance` annotation.",
+                Warning,
+                stacklevel=2,
+            )
+
+        if date_facets:
+            # Accepted-and-ignored features must be loud (V1 has no
+            # date-facet IR op; phase 5+ work).
+            warnings.warn(
+                "Pitchfork does not support date facets yet; "
+                "`date_facets` is ignored.",
+                Warning,
+                stacklevel=2,
+            )
+
+        if query_facets:
+            warnings.warn(
+                "Pitchfork does not support query facets yet; "
+                "`query_facets` is ignored.",
+                Warning,
+                stacklevel=2,
+            )
 
         # A zero-length query should return no results.
         if not query_string:
@@ -331,7 +423,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
             ast = {"node": "and", "children": [ast] + narrow}
 
         request = {
-            "v": 1,
+            "v": wire_v1.WIRE_VERSION,
             "schema_fp": self.schema_fp,
             "ast": ast,
             "start": start_offset,
@@ -343,6 +435,9 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
             # Wire rule: spelling_query defaults to the main query server-side.
             "spelling_query": spelling_query or str(query_string),
             "spatial": adapter_base.spatial_filter(within=within, dwithin=dwithin),
+            # P0-5: facets must be page-independent; the client picks the
+            # scan cap for the full-match-set aggregation.
+            "facet_scan_limit": adapter_base.FACET_SCAN_LIMIT,
         }
 
         response = self.client.post("/search", request)
@@ -374,7 +469,7 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
 
         doc_id = get_identifier(model_instance)
         request = {
-            "v": 1,
+            "v": wire_v1.WIRE_VERSION,
             "schema_fp": self.schema_fp,
             "ast": {"node": "match_all"},
             "start": start_offset,
@@ -408,6 +503,18 @@ class PitchforkSearchBackend(ResultProcessingMixin, BaseSearchBackend):
 
 
 class PitchforkSearchQuery(BaseSearchQuery):
+    def add_boost(self, term, boost_value):
+        """P1-1: boost is accepted for haystack-API compatibility but the
+        V1 engine has no term-boost IR op; relevance control is silently
+        ignored — which must be loud, not silent."""
+        warnings.warn(
+            "Pitchfork does not support term boosting yet; "
+            "boost(%r, %r) is ignored." % (term, boost_value),
+            Warning,
+            stacklevel=2,
+        )
+        super().add_boost(term, boost_value)
+
     def build_query(self):
         """Builds the final query as a JSON-encoded PitchforkWireV1 AST
         instead of a backend query string. The backend decodes it."""

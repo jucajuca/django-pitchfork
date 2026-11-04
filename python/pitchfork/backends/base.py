@@ -27,10 +27,10 @@ from haystack.utils import get_model_ct
 
 from ..exceptions import PitchforkServerError, PitchforkWireError
 from .. import wire as wire_v1
-from ..wire import encode_point, spatial_dwithin, spatial_filter, spatial_within  # noqa: F401
-
-# Spatial helpers are part of the wire module (both-sides rule); re-exported
-# here so adapters can use them via the shared base module.
+# Only `spatial_filter` is consumed via this module (both adapters); the
+# other spatial helpers are wire-module API and tests import them from
+# `wire` directly.
+from ..wire import spatial_filter  # noqa: F401
 
 # Default limit when scanning all matches (mirrors the engine's window cap).
 FACET_SCAN_LIMIT = 10_000
@@ -107,28 +107,117 @@ def encode_wire_value(value):
 
 
 def _input_value(value):
-    """Unwrap haystack input types into plain wire values."""
+    """Unwrap haystack input types into plain wire values.
+
+    Haystack's inputs (``haystack/inputs.py``) all store ``.query_string``
+    (``BaseInput.__init__(query_string, ...)``) — P0-1: reading a ``.value``
+    attribute raise `AttributeError`.
+    """
     if isinstance(value, (AutoQuery, Clean, Exact, Raw)):
-        return value.value
+        return value.query_string
     return value
 
 
-def encode_filter(field, filter_type, value):
-    """Encode a single (field, filter_type, value) leaf into a filter node."""
-    value = _input_value(value)
+def _encode_auto_query(field, auto_query):
+    """Encode ``AutoQuery`` token semantics as wire AST nodes.
 
-    # AutoQuery is a full-text content lookup regardless of the field name.
-    if isinstance(value, AutoQuery) or filter_type == "content":
-        op = "content"
-        cleaned = value
-        if isinstance(cleaned, (Clean, Exact, Raw)):
-            cleaned = cleaned.value
-        return {
-            "node": "filter",
-            "field": field,
-            "op": op,
-            "value": str(cleaned) if cleaned is not None else None,
-        }
+    Mirrors ``haystack/inputs.py::AutoQuery.prepare``: quoted phrases are
+    exact bits, ``-``-prefixed terms are NOTs, everything else is a clean
+    term. Whoosh emits these as a query *string* its parser interprets
+    (``NOT term``, ``"phrase"``); the AST expresses the same intent with
+    explicit nodes — positive bits OR together (whoosh's default group),
+    NOTs conjoin on top.
+
+    The actual character cleaning stays in the engine's ``content`` op
+    (it already strips punctuation and lowercases like the default
+    tokenizer).
+    """
+    exacts = AutoQuery.exact_match_re.findall(auto_query.query_string)
+    positives = []
+    negatives = []
+    for rough in AutoQuery.exact_match_re.split(auto_query.query_string):
+        if not rough:
+            continue
+        tokens = [rough] if rough in exacts else rough.split(" ")
+        for token in tokens:
+            if not token or token in exacts:
+                if token in exacts:
+                    positives.append(
+                        {
+                            "node": "filter",
+                            "field": field,
+                            "op": "content",
+                            "value": token,
+                        }
+                    )
+                continue
+            if token.startswith("-") and len(token) > 1:
+                negatives.append(
+                    {
+                        "node": "not",
+                        "child": {
+                            "node": "filter",
+                            "field": field,
+                            "op": "content",
+                            "value": token[1:],
+                        },
+                    }
+                )
+            else:
+                positives.append(
+                    {
+                        "node": "filter",
+                        "field": field,
+                        "op": "content",
+                        "value": token,
+                    }
+                )
+
+    if positives and len(positives) > 1:
+        positive_node = {"node": "or", "children": positives}
+    elif positives:
+        positive_node = positives[0]
+    else:
+        positive_node = None
+
+    if positive_node is None:
+        if not negatives:
+            # Empty input: no tokens at all. No document can match a
+            # content query on an empty string.
+            return {
+                "node": "filter",
+                "field": field,
+                "op": "content",
+                "value": "",
+            }
+        children = negatives
+    elif negatives:
+        children = [positive_node] + negatives
+    else:
+        return positive_node
+
+    if len(children) == 1:
+        return children[0]
+    return {"node": "and", "children": children}
+
+
+def encode_filter(field, filter_type, value):
+    """Encode a single (field, filter_type, value) leaf into a filter node.
+
+    Content-Fix note: haystack's ``content`` pseudo-field and ``AutoQuery``
+    encode as a ``content`` op here; the ``content`` field name itself is
+    translated to the index's document field by the shared adapters
+    (``_decode_query`` — same for both transports), mirroring whoosh's
+    ``if field == "content": index_fieldname = ""``.
+    """
+    # Detect the input *before* unwrapping (P0-1: the old check sat after
+    # the unwrap and could never fire).
+    is_auto_query = isinstance(value, AutoQuery)
+    if is_auto_query:
+        return _encode_auto_query(field, value)
+    # AutoQuery is handled above; other inputs unwrap to their query
+    # string (Clean/Exact/Raw all carry `.query_string`).
+    value = _input_value(value)
 
     return {
         "node": "filter",

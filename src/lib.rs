@@ -9,10 +9,10 @@
 //! - The interface is JSON in / JSON out over the same PitchforkWireV1
 //!   serde types the server uses, so the protocol contract cannot drift.
 
-
 use pitchfork_core::schema::PitchforkSchema;
 use pitchfork_core::wire::{
-    IndexRequestV1, RemoveRequestV1, SearchRequestV1, SearchResponseV1, AckResponseV1,
+    AckResponseV1, ClearRequestV1, IndexRequestV1, RemoveRequestV1, SearchRequestV1,
+    SearchResponseV1,
 };
 use pitchfork_engine::{SearchEngine, TantivyEngine};
 use pyo3::exceptions::PyValueError;
@@ -41,8 +41,7 @@ impl PyPitchforkEngine {
 
     /// Register the schema (JSON). Returns the server-computed fingerprint.
     fn setup(&self, schema_json: &str) -> PyResult<String> {
-        let schema: PitchforkSchema =
-            serde_json::from_str(schema_json).map_err(to_py_err)?;
+        let schema: PitchforkSchema = serde_json::from_str(schema_json).map_err(to_py_err)?;
         let fp = schema.fingerprint();
         self.inner.setup(&schema).map_err(to_py_err)?;
         Ok(fp)
@@ -72,21 +71,22 @@ impl PyPitchforkEngine {
         serde_json::to_string(&ack).map_err(to_py_err)
     }
 
-    /// Clear the index (ack JSON). GIL released.
-    fn clear(&self, py: Python<'_>) -> PyResult<String> {
-        // ClearRequestV1 is validated implicitly by the engine; the ack is
-        // what crosses the boundary.
-        let ack: AckResponseV1 = py.allow_threads(|| self.inner.clear().map_err(to_py_err))?;
+    /// Clear the index (request JSON -> ack JSON). GIL released.
+    fn clear(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let request: ClearRequestV1 = serde_json::from_str(request_json).map_err(to_py_err)?;
+        let ack: AckResponseV1 =
+            py.allow_threads(|| self.inner.clear(&request).map_err(to_py_err))?;
         serde_json::to_string(&ack).map_err(to_py_err)
     }
 
     /// More-like-this by document id (response JSON). GIL released.
     fn more_like_this(&self, py: Python<'_>, doc_id: &str, request_json: &str) -> PyResult<String> {
-        let mut request: SearchRequestV1 =
-            serde_json::from_str(request_json).map_err(to_py_err)?;
+        let mut request: SearchRequestV1 = serde_json::from_str(request_json).map_err(to_py_err)?;
         request.mlt_doc_id = Some(doc_id.to_string());
         let response: SearchResponseV1 = py.allow_threads(|| {
-            self.inner.more_like_this(doc_id, &request).map_err(to_py_err)
+            self.inner
+                .more_like_this(doc_id, &request)
+                .map_err(to_py_err)
         })?;
         serde_json::to_string(&response).map_err(to_py_err)
     }

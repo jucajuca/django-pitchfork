@@ -190,7 +190,10 @@ mod tests {
             FieldType::from_haystack("string", true),
             Some(FieldType::Char)
         );
-        assert_eq!(FieldType::from_haystack("datetime", false), Some(FieldType::DateTime));
+        assert_eq!(
+            FieldType::from_haystack("datetime", false),
+            Some(FieldType::DateTime)
+        );
         assert_eq!(FieldType::from_haystack("bogus", false), None);
     }
 }

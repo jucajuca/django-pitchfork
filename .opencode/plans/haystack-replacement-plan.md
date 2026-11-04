@@ -39,14 +39,21 @@ replacement — it is what `PitchforkEngine` adopts today, before any of this
 plan exists.
 
 Names are fixed by `docs/adr/0004-engine-name-and-package-split.md` (in the
-engine repo), which supersedes ADR 0002's inverted split. Note the asymmetry:
-PyPI's `pitchfork` is held by an unrelated abandoned project, which is why the
-engine's *distribution* is `pitchfork-engine` while its *import* is
-`pitchfork`.
+engine repo), which superseded the earlier two-package ADR (0002, removed —
+its split was never shipped and is inverted by 0004). Note the asymmetry: PyPI's `pitchfork`
+is held by an unrelated abandoned project, which is why the engine's
+*distribution* is `pitchfork-engine` while its *import* is `pitchfork`.
 
 Related (read first):
+- `pitchfork-engine-defect-fixes.md` (same directory) — **blocking
+  prerequisite**. The engine defects this plan's Phase 0.5 must fix before any
+  conformance porting is meaningful.
 - `docs/adr/0004-engine-name-and-package-split.md` (engine repo) — the naming
   decision this plan implements.
+- `docs/adr/0001-single-query-ir-for-every-backend.md` — the IR bet this plan
+  extends (see "Extensibility" below).
+- `docs/adr/0005-ir-extensibility-and-capability-negotiation.md` — the
+  additivity/`caps` contract the Extensibility section specifies.
 - `django-haystack/.opencode/plans/django-pitchfork-architecture.md` — the
   design principles this plan inherits.
 - `django-haystack/.opencode/plans/django-pitchfork-migration-plan.md` — the
@@ -62,12 +69,16 @@ Related (read first):
 
 ## Evaluation: what haystack is, measured
 
-- `haystack/` ≈ 9,000 LOC. Backend-agnostic machinery: `backends/__init__.py`
-  (1,109 — `BaseEngine`, `BaseSearchBackend`, `SearchNode`/`SQ`,
-  `BaseSearchQuery`, `connections`, `UnifiedIndex`), `query.py` (768 —
-  `SearchQuerySet`, ~50 public methods), `fields.py` (562 — 19 field classes
-  incl. the `Facet*` mixins), `inputs.py` (169 — `BaseInput`, `Raw`,
-  `PythonData`, `Clean`, `Exact`, `Not`, `AutoQuery`, `AltParser`),
+All line counts below are `wc -l` on the `django-haystack` checkout, verified
+2026-11-04. An earlier draft of this plan used round numbers that understated
+the test-porting scope by roughly 2.5×; the numbers here replace them.
+
+- `haystack/` ≈ **10,799 LOC** total. Backend-agnostic machinery:
+  `backends/__init__.py` (1,109 — `BaseEngine`, `BaseSearchBackend`,
+  `SearchNode`/`SQ`, `BaseSearchQuery`, `connections`, `UnifiedIndex`),
+  `query.py` (768 — `SearchQuerySet`, ~50 public methods), `fields.py` (562 —
+  19 field classes incl. the `Facet*` mixins), `inputs.py` (169 — `BaseInput`,
+  `Raw`, `PythonData`, `Clean`, `Exact`, `Not`, `AutoQuery`, `AltParser`),
   `indexes.py` (548 — `SearchIndex`/`ModelIndex`/registration), plus
   `views.py`, `generic_views.py`, `forms.py`, `admin.py`, `panels.py`,
   `models.py` (`SearchResult`), `manager.py`, `signals.py`, `routers.py`,
@@ -76,18 +87,36 @@ Related (read first):
   (`build_search_kwargs`, `build_query_fragment`, `clean`, `run`,
   `build_schema`, `_process_results`, `more_like_this`,
   `extract_file_contents`) against that engine's DSL, with no shared IR.
-  Solr's copy is 977 lines; Elasticsearch's 1,129 (+ 1,045 across the
-  version-split `es5`/`es7` files); Whoosh's 1,104. This duplication is the
-  maintenance hole the replacement closes.
-- Backend test suite ≈ 7,000 LOC, **copy-pasted per backend**
-  (`test_haystack/whoosh_tests`, `solr_tests`, `elasticsearch_tests` share
-  shape, not code). The shared `test_haystack/*.py` core tests are
-  backend-agnostic and port nearly as-is.
+  Solr's copy is 977 lines; Elasticsearch's 1,129 (+ 475 for `es5` and 578 for
+  `es7`); Whoosh's 1,104. This duplication is the maintenance hole the
+  replacement closes.
+- Backend test suite is **18,301 LOC**, not ~7,000:
+
+  | Path | LOC | Ported by |
+  |---|---|---|
+  | `test_haystack/*.py` (shared, backend-agnostic) | 5,600 | Phase 0/7 |
+  | `core/` (shared fixtures + model app) | 170 | Phase 0 |
+  | `discovery/`, `multipleindex/` (routers) | 33 / 412 | Phase 0 |
+  | `test_app_using_appconfig/`, `test_app_with_hierarchy/`, `test_app_without_models/` | 59 / 10 / 10 | Phase 0 |
+  | `spatial/` (geo fixtures/apps) | 352 | Phase 3 |
+  | `simple_tests/` | 332 | Phase 0 |
+  | `whoosh_tests/` | 2,094 | Phase 3 |
+  | `solr_tests/` | 2,557 | Phase 4 |
+  | `elasticsearch_tests/` | 2,303 | Phase 5 |
+  | `elasticsearch5_tests/` / `elasticsearch7_tests/` | 2,139 / 2,230 | Phase 5 (collapsed) |
+
+  The **shared 5,600 LOC is what Phase 0 must port** — it is the conformance
+  base, and it is 33× the size of `core/`. The 9,265 LOC across the five
+  per-backend directories is copy-pasted by shape; collapsing it into one
+  parameterized suite (principle 7) is where that duplication is won back.
 - Backends haystack ships: Solr, Elasticsearch (3 version-split files),
-  Whoosh, `simple`. **Xapian and PostgreSQL FTS are third-party** and
-  unmaintained. Capability parity matrix lives in `docs/backend_support.rst`
-  (Solr is the reference: everything incl. stats requests and Tika file
-  extraction; Whoosh lacks MLT-native + stats + spatial).
+  Whoosh, `simple`. **Xapian and PostgreSQL FTS are third-party**
+  (`docs/backend_support.rst:71-95`,"available as a third-party download").
+  The capability matrix in that file
+  (`docs/backend_support.rst:99-116`) is a real 8-column table — Solr and ES
+  support everything; Whoosh has basic faceting and no spatial; Xapian
+  highlighting needs a plugin. Our replacement regenerates this table from
+  `BackendCaps` so it cannot drift (ADR-0001).
 
 ## The one architectural bet: a single query IR
 
@@ -123,9 +152,54 @@ Consequences:
    responses into the normalized shape.
 3. Filter-op parity bugs (the `startswith`/`endswith`/`contains` class of
    drift) become single-site fixes with property tests at the IR, not six
-   copies.
+   copies. **Caveat:** this only pays off once the site is *correct*. Today the
+   native engine's single site has the bug the IR was supposed to prevent —
+   `FilterOp::Contains` is compiled identically to `Exact`, so `__contains`
+   means whole-value equality instead of haystack's `*…*` substring. Fixing
+   that is the first item of `pitchfork-engine-defect-fixes.md`; until it
+   lands, the IR is centralized but wrong on this op, and a conformance suite
+   would enshrine the wrong answer.
 4. Feature gaps (stats on Whoosh, spatial on Whoosh) are explicit IR ops the
    backend declares unsupported — with warnings, matching haystack's behavior.
+
+### Extensibility: how a per-engine feature becomes an IR op
+
+This is the property the whole design rests on, so it is specified rather than
+assumed. Adding a feature that exists in some engines but not others takes four
+steps, none of which touch existing ones:
+
+1. **IR node** — add the variant to `QueryNode`/`FilterOp` in
+   `pitchfork-core/src/query_ast.rs`. Serde is tagged (`#[serde(tag = "node")]`)
+   and request fields are `#[serde(default)]`, so an old engine receiving an
+   unknown tag fails loudly ("unknown variant") while an old *client* simply
+   never sends it. Additive change; no `WIRE_VERSION` bump.
+2. **Declaration** — the backend lists the op in its `BackendCaps`
+   (`supported_ir_ops`). This is the runtime contract, not a docs table: the
+   client reads it from `/setup`'s ack and the conformance suite reads it to
+   decide skip-vs-assert.
+3. **Lowering** — a backend that supports it maps the node to its DSL; a
+   backend that does not returns "unsupported" **loudly** (warning + declared
+   gap), never a silent no-op.
+4. **Capability-gated test** — one conformance test asserts behaviour where
+   `caps` says supported, and asserts the loud warning everywhere else.
+
+The `WIRE_VERSION` bump is reserved for *semantic* changes to existing ops
+(e.g. redefining `contains`), not additive ones. That distinction is what makes
+the IR extensible without a protocol break every minor release; it is also why
+P0-4, which changes `contains` semantics, ships as a versioned engine release
+with a changelog note.
+
+Three additions strengthen this beyond what the earlier draft specified:
+
+- **Caps travel on the wire**, not just in Python. `/setup`'s ack returns
+  `{"caps": {"ir_ops": [...], "highlight": true, ...}}`. Without this,
+  "extensible" is a promise in a docs table that nothing enforces.
+- **An extension envelope** for borderline features:
+  `"pitchfork_extensions": {...}` in the request, ignored by engines that do
+  not know it. Lets Phase 2-style features land without bumping V2.
+- **Loud gaps are testable.** Every declared-unsupported op gets a test
+  asserting a warning (or an explicit error), which is what turns "declared
+  gap" from documentation into behaviour.
 
 ## Design principles (inherited + new)
 
@@ -234,7 +308,7 @@ Consequences:
 
 | Backend    | Client              | Pin (verify at impl)     | Service in CI |
 |---|---|---|---|
-| pitchfork (native) | `pitchfork-engine` (this project) | `>=0.1`            | own fixture (never skips) |
+| pitchfork (native) | `pitchfork-engine` (this project) | `>=0.2`            | own fixture (never skips) |
 | Whoosh     | whoosh              | `>=2.7,<3` (unmaintained)| none (file-based) |
 | Solr       | pysolr              | `>=3.9,<5`               | docker compose (solr:9, core `collection1`) |
 | Elasticsearch | elasticsearch-py | `>=7.17,<9` (7/8 only)   | docker compose (es:8) — destructive teardown, never point at real clusters |
@@ -252,34 +326,67 @@ Ordering rationale: Whoosh first (pure Python, no service, fastest
 conformance loop), then Solr (most complete reference backend), then ES,
 then Xapian (bindings need system libs).
 
-**Repo ownership.** Phases 1 and 2 are the only ones that touch the engine
-repo (`pitchfork-engine`); every other phase is replacement-repo work. The two
+**Repo ownership.** Phases 0.5, 1 and 2 are the only ones that touch the engine
+repo (`pitchfork-engine`); every other phase is replacement-repo work. The
 engine phases are sequenced first because the replacement cannot subclass
-`pitchfork.backends.base` (Phase 1) or express the full IR (Phase 2) until
-they land and are released.
+`pitchfork.backends.base` (Phase 1), cannot express the full IR (Phase 2), and
+— critically — cannot port a conformance suite onto a backend that returns
+wrong answers (Phase 0.5).
+
+### Phase 0.5 — Fix confirmed engine defects (engine repo) — *blocking*
+
+Blocking prerequisite: `pitchfork-engine-defect-fixes.md` in the engine repo's
+`plans/` directory. It records seven P0 defects reproduced against the shipped
+engine, including four that a migrated haystack user hits immediately:
+
+- `auto_query()` / `raw_search()` raise `AttributeError` (haystack inputs carry
+  `.query_string`, not `.value`);
+- `filter(content="…")` sends the literal field name `content` and fails with
+  "unknown field 'content'";
+- a bare filter on a typed field (`filter(rank=2)`, `filter(is_active=True)`)
+  returns nothing, while `filter(rank__exact=2)` works;
+- `__contains` is compiled as `Exact`, so substring search returns nothing.
+
+Plus page-bound facets, char-field sorting that silently returns `[]`, and
+highlighting that can never produce a snippet, and silently ignored `boost` /
+`distance_point`. Everything in that document must ship as a
+`pitchfork-engine` minor release **before** Phase 0's conformance port begins,
+because porting V1 behaviour onto today's engine would encode the bugs as
+expected results. This plan pins that release as its minimum.
+
+The review's claim that `docs/backend_support.rst` lacks a capability matrix is
+incorrect (it has an 8-column matrix at lines 99–116); no plan change needed.
 
 ### Phase 0 — Foundations
 - `django_pitchfork/` package skeleton + public-API re-export surface; pyproject
   entry (dist `django-pitchfork`; extras: `django-pitchfork[solr]`,
-  `[elasticsearch]`, `[xapian]`; hard dependency `pitchfork-engine>=0.1`).
-- Port the backend-agnostic `test_haystack/*.py` core tests as the
-  conformance base; scaffold `conformance/` suite parameterized over
-  backends (single `BASE_TESTCASES` list run per backend via `__subclasses__`
-  or parametrize). Port the app-discovery edge-case apps too:
-  `discovery/`, `multipleindex/` (routers), `altered_internal_names`,
-  `app_with_hierarchy`, `app_without_models`, `app_using_appconfig` — these
-  are the UnifiedIndex registration edge cases.
-- **`BackendCaps` mechanism (review finding F3)**: each backend ships a caps
-  module declaring (a) supported IR ops (unsupported → the suite skips with
-  a loud warning) and (b) per-backend expectation overrides (spelling
+  `[elasticsearch]`, `[xapian]`; hard dependency
+  `pitchfork-engine>=0.2` — the defect-fix release that makes the engine's
+  V1 behaviour actually match haystack).
+- Port the backend-agnostic `test_haystack/*.py` tests as the conformance
+  base — **5,600 LOC, not a "170 LOC core subset"**. Budget this as the single
+  largest porting task in the plan and sequence it by file: `test_query.py` and
+  `test_backends.py` first (they exercise the IR surface), then
+  `test_fields.py`, `test_indexes.py`, `test_loading.py`, `test_managers.py`,
+  `test_models.py`, `test_views.py`/`test_forms.py` (Phase 7), and
+  `test_templatetags.py` last. Scaffold `conformance/` parameterized over
+  backends (single `BASE_TESTCASES` list run per backend). Port the
+  app-discovery edge-case apps too: `discovery/`, `multipleindex/` (routers),
+  `altered_internal_names`, `app_with_hierarchy`, `app_without_models`,
+  `app_using_appconfig` — these are the UnifiedIndex registration edge cases.
+- **`BackendCaps` mechanism (review finding F3)** — this is a wire-level
+  contract, not a docs convention. Each backend ships a caps module declaring
+  (a) supported IR ops and (b) per-backend expectation overrides (spelling
   suggestions, highlight fragment formats, tie-broken ordering differ by
-  engine — the suite consults the caps rather than asserting one universal
-  answer). The docs backend-support table is **generated** from the caps
-  modules, so the table cannot drift.
+  engine). The native backend publishes its caps from `/setup`'s ack (see
+  "Extensibility" above); unsupported ops warn loudly and the suite skips them
+  *by consulting caps*, never by guessing. The docs backend-support table is
+  **generated** from the caps modules, so the table cannot drift.
 - docker compose file at `docker/docker-compose.yml` (haystack's convention —
   not repo root) for solr + es + a xapian-capable image; loud-skip reporting
   in the runner.
-- **Tests**: ported core tests green against `simple` backend.
+- **Tests**: ported conformance subset green against `simple` and the native
+  backend, in both embedded and server modes.
 
 ### Phase 1 — Core API layer (Python, no engines)
 - Port `fields.py` (all 19 classes, `convert`/`prepare` semantics),
@@ -298,12 +405,41 @@ they land and are released.
   `pitchfork.models`, `pitchfork.utils`) so the **engine runs with haystack
   uninstalled**. `django_pitchfork` then subclasses those, and its own
   `haystack.*` vocabulary is filled by `django_pitchfork.*`.
+- **`_process_results` must move, not just shed imports (corrected risk)**.
+  The earlier draft called this phase "a mechanical dependency drop". It is
+  not: `ResultProcessingMixin._process_results` (`server.py:47-96`) does
+  `from haystack import connections` at *query time*, reads the live
+  `UnifiedIndex` to find the index class and its field `convert()` callables,
+  and calls `haystack_get_model()`. An engine that resolves models and
+  inspects `SearchIndex` field metadata is not haystack-free by any
+  substitution of import paths.
+
+  The ownership split that actually satisfies the gate:
+
+  | Responsibility | Owner after Phase 1 |
+  |---|---|
+  | Execute query, return `hits[]` with `id`, `django_ct`, `django_id`, `score`, `stored`, `snippets` | engine (raw wire hits) |
+  | Resolve `app_label.model` → model class; validate against the index registry | replacement |
+  | Apply per-field `convert()` while building the result object | replacement |
+  | Construct `SearchResult` subclasses, ordering, cache | replacement |
+
+  So Phase 1's `pitchfork.backends.base` keeps transport, AST encoding and
+  schema compilation; it returns **raw hit dicts**. `django_pitchfork` gains a
+  `results.py` that does model resolution and result construction. Phase 0.5's
+  injectable accessor (P1-6 in the defect plan) is the interim step that lets
+  the engine's own suite pass a haystack-free test *before* the split.
+
+  This is more work than the draft implied, and it is the plan's largest
+  correctness risk: it changes the result-object construction path that every
+  backend shares.
 - **Engine change, released separately**: together with Phase 2 this is one of
-  the two engine-repo phases. It lands there first, as a `pitchfork-engine`
-  minor version (dropping a runtime dependency does not change the backends'
-  behaviour, but it *is* an API change for anyone importing
-  `pitchfork.backends.base`, so call it out in the engine's changelog), and
-  `django-pitchfork` pins `>=` that version.
+  the engine-repo phases. It lands there first, as a `pitchfork-engine` minor
+  (dropping a runtime dependency does not change the backends' behaviour, but
+  it *is* an API change for anyone importing `pitchfork.backends.base`, so call
+  it out in the engine's changelog), and `django-pitchfork` pins `>=` that
+  version. Note the behaviour change for engine-only adopters: raw-hit return
+  vs. `SearchResult` construction must keep a compatibility path (or the
+  engine keeps a haystack-backed `results.py` until `django_pitchfork` exists).
 - **Tests**: haystack's `test_fields.py`, `test_inputs.py`, `test_indexes.py`,
   `test_loading.py`, `test_query.py`, `test_managers.py` ported green; the
   native backend passes the conformance subset with haystack NOT installed.
@@ -311,20 +447,31 @@ they land and are released.
   importable" job, and `django_pitchfork`'s CI runs with haystack absent except
   in the phase 8 parity job.
 
-### Phase 2 — IR completion + Wire V2 (engine repo)
-- **Lands in the engine repo**, not the replacement: this is the second (and
-  last) engine-side phase. Requires a `pitchfork-engine` minor bump and a
-  `WIRE_VERSION` bump; the engine's own suite must stay green on V2 before
-  `django-pitchfork` may depend on it.
+### Phase 2 — IR completion (engine repo)
+- **Lands in the engine repo**, not the replacement: this is the last
+  engine-side phase. Requires a `pitchfork-engine` minor bump; the engine's own
+  suite must stay green on V2 before `django-pitchfork` may depend on it.
 - Extend `pitchfork-core/query_ast.rs` with the ops the native engine still
   lacks: `boost`, `stats`/`stats_facets`, `date_facets`, `query_facets`,
   `autocomplete`, MLT params (min_doc_freq/term fields), distance
-  annotation. Wire **V2** (V1 → V2; both sides same commit, negotiation
-  bumps per the compatibility contract).
+  annotation.
+- **Versioning rule (revised).** Additive ops do **not** bump
+  `WIRE_VERSION` — serde-tagged nodes plus `#[serde(default)]` request fields
+  make them backward-compatible, and an old engine rejects an unknown tag
+  loudly. Bump to **V2** only for semantic changes to existing ops, or for
+  changes that need new *required* request fields. Ship the additive ops under
+  V1 first, and use the `pitchfork_extensions` envelope (see "Extensibility")
+  for anything provisional. This replaces the earlier draft's "V1 → V2 for
+  every Phase 2 op", which would force a coordinated release for changes that
+  do not need one.
 - IR pretty-printer (for `str(query)`) + property tests both sides.
 - Native engine implements the new ops where tantivy allows; declares the
   rest unsupported-with-warning (Solr-only `stats` on Whoosh-class engines).
-- **Tests**: round-trip proptests; native conformance subset green on V2.
+- `/setup` ack returns the `caps` block (supported IR ops, highlight support,
+  facet modes) so clients can negotiate instead of guessing.
+- **Tests**: round-trip proptests; native conformance subset green; one
+  capability-gated test per new op (supported → asserts behaviour;
+  unsupported → asserts the loud warning).
 
 ### Phase 3 — Whoosh backend
 - `backends/whoosh.py`: schema build (per-field analyzers preserved —
@@ -413,10 +560,15 @@ they land and are released.
 
 ## Non-goals
 
-- **No changes to the engine's search behaviour or wire protocol.** The one
-  engine-side change is Phase 1's haystack-import removal in
-  `pitchfork.backends.base`; the `pitchfork.backends.server` /
-  `pitchfork.backends.embedded` ENGINE paths and their options stay as shipped.
+- **No changes to the engine's *architecture* or wire protocol beyond what
+  Phases 0.5/1/2 specify.** Note the correction: Phase 0.5 *does* change engine
+  search behaviour, deliberately and with tests — `__contains` becomes
+  substring, facets become page-independent, `filter(content=…)` and
+  `auto_query()` start working, bare lookups on typed fields stop returning 0.
+  These are defect fixes, not new features, and they ship with a changelog
+  naming each semantic change. The `pitchfork.backends.server` /
+  `pitchfork.backends.embedded` ENGINE paths and their options otherwise stay
+  as shipped.
 - **No merging of the two packages.** `django-pitchfork` is never vendored
   into this repo and `pitchfork-engine` never grows replacement code; the
   replacement depends on the engine, not the other way round.
@@ -424,17 +576,25 @@ they land and are released.
   tests only (a dev dependency of both repos).
 - No PostgreSQL FTS backend (future work), no new engines beyond the table.
 - No ORM/query integration beyond haystack's existing surface.
+- No Xapian parity target that exceeds the third-party backend's documented
+  capability — `docs/backend_support.rst` says Xapian needs a plugin for
+  highlighting and has no spatial support; we match that, we do not exceed it.
 
 ## Risk register
 
 | Risk | Mitigation |
 |---|---|
+| **Confirmed engine defects make the parity baseline wrong** (7 P0s: `auto_query` crash, `content` unmapped, bare typed lookups return 0, `__contains`=`exact`, page-bound facets, char-sort empty, no highlighting; plus silent `boost`/`distance_point` drops) | Phase 0.5 blocks Phase 0; `pitchfork-engine-defect-fixes.md` lists each with a failing test and a fix; the conformance suite runs only against the fixed release |
 | haystack's undocumented `BaseSearchQuery` subtleties (`build_params`, `_process_results` result_class/distance, `SearchNode` deepcopy semantics) | Port tests first per module; conformance suite pins behavior |
+| **`_process_results` needs the live `UnifiedIndex` at query time** — "drop haystack imports" does not satisfy the haystack-free gate | Phase 1 splits raw-hit emission (engine) from model resolution + result construction (replacement); Phase 0.5's injectable accessor is the interim step |
+| **Test-porting scope underestimated ~2.5×** (shared suite is 5,600 LOC; an earlier draft's "~7,000 LOC total" was wrong) | Phase 0 budgets the 5,600 LOC explicitly and sequences it per file; the 9,265 LOC across the five per-backend dirs is what the parameterized suite wins back |
+| **Additive IR ops were planned to bump `WIRE_VERSION`**, forcing coordinated releases | Revised Phase 2: additive ops stay on V1 (serde-tagged + `default`-tolerant); V2 only for semantic/required-field changes; `pitchfork_extensions` envelope for provisional ops |
 | Whoosh unmaintained (2.7.x) | Pin `<3`; vendor decision deferred to a dedicated ADR if 2.7 breaks on a new Python |
 | ES client 7/8 drift vs haystack's 3-file split | One backend, 7.17 floor; compose-pinned server version |
-| Xapian needs system libs (GeoDjango-class problem) | docker image for CI; loud-skip locally with install hint |
-| IR can't express an engine feature (e.g. ES `_all` fuzziness, Solr stats) | IR ops are additive; backend declares unsupported-with-warning; gap table in docs is generated from the IR |
+| Xapian needs system libs (GeoDjango-class problem) | docker image for CI; loud-skip locally with install hint; parity capped at its documented capabilities (no spatial, plugin-highlighting) |
+| IR can't express an engine feature (e.g. ES `_all` fuzziness, Solr stats) | IR ops are additive; backend declares unsupported-with-warning; `caps` published on the wire at `/setup`; gap table in docs is generated from caps |
 | Two packages drifting (`django_pitchfork` vs `pitchfork`) | One-way import rule (no back-edges); CI enforces via import-linter in the replacement repo; the engine repo has no knowledge of the replacement |
 | Engine and replacement release out of step (`django-pitchfork` needs a feature the pinned engine lacks) | `django-pitchfork` declares a `pitchfork-engine>=X` floor it was tested against; bumping is an explicit, reviewed change, never an open range |
-| AltParser/`raw_search` bypass the IR | Allowed by design; each backend documents its raw syntax; conformance suite keeps raw tests per backend |
+| AltParser/`raw_search` bypass the IR | Allowed by design; each backend documents its raw syntax; conformance suite keeps raw tests per backend. Note `raw_search` currently *crashes* (`.value`), fixed in Phase 0.5 |
 | Silent test skips (haystack's known problem) | Runner prints a loud skip summary and fails CI if an owned service (pitchfork fixture, Whoosh/Xapian) is unavailable |
+| `SILENTLY_FAIL = True` hides backend errors as empty result sets | Phase 0.5 keeps haystack's default but logs every downgraded error; the conformance suite runs with `SILENTLY_FAIL: False` so failures surface as failures |

@@ -7,9 +7,9 @@
 
 use crate::{CompiledIndex, EngineError, Result};
 use std::collections::HashMap;
+use tantivy::collector::Count;
 use tantivy::query::{FuzzyTermQuery, TermQuery};
 use tantivy::schema::{IndexRecordOption, TantivyDocument};
-use tantivy::collector::Count;
 use tantivy::{Searcher, Term};
 
 /// Maximum number of candidate terms to rank per misspelled word.
@@ -96,9 +96,7 @@ fn best_candidate(
     // Candidates from every segment's term dictionary (deduped).
     let mut candidates: Vec<String> = Vec::new();
     for seg in searcher.segment_readers() {
-        let inv = seg
-            .inverted_index(field)
-            .map_err(EngineError::from)?;
+        let inv = seg.inverted_index(field).map_err(EngineError::from)?;
         // A fresh automaton per segment: DfaWrapper is not Clone.
         let automaton = FuzzyTermQuery::new(term.clone(), 2, true)
             .automaton()
@@ -191,7 +189,10 @@ pub fn damerau_levenshtein(a: &str, b: &str) -> usize {
 /// Convenience: extract the stored text of a document (unused today but kept
 /// for the highlight path's tests).
 #[allow(dead_code)]
-pub(crate) fn first_stored_text(doc: &TantivyDocument, field: tantivy::schema::Field) -> Option<String> {
+pub(crate) fn first_stored_text(
+    doc: &TantivyDocument,
+    field: tantivy::schema::Field,
+) -> Option<String> {
     use tantivy::schema::OwnedValue;
     doc.get_all(field).find_map(|v| match OwnedValue::from(v) {
         OwnedValue::Str(s) => Some(s),

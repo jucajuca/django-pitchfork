@@ -47,14 +47,18 @@ fuzz:
 save-bench:
     @echo "Run benchmarks and record numbers in BENCHMARK.md"
 
-# Release: bump/commit/tag/push. The package version is dynamic (read from
-# the root Cargo.toml by maturin), so bump it there.
+# Release: bump all version declarations together, tag, push. The package
+# version is dynamic (read from the root Cargo.toml by maturin); bump it in
+# the workspace block, mirror it in python/pitchfork/__init__.py, and record
+# the release in CHANGELOG.md first.
 release VERSION:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    sed -i '0,/^version = ".*"/s//version = "{{VERSION}}"/' Cargo.toml
-    cargo check -p pitchfork -q
-    git add -A
-    git commit -m "Release {{VERSION}}"
-    git tag "v{{VERSION}}"
-    git push origin master --tags
+    #!/bin/sh
+    set -eu
+    grep -q "version = \"{{ VERSION }}\"" Cargo.toml || { echo "Cargo.toml is not at {{ VERSION }} (workspace version)"; exit 1; }
+    grep -q "__version__ = \"{{ VERSION }}\"" python/pitchfork/__init__.py || { echo "python/pitchfork/__init__.py is not at {{ VERSION }}"; exit 1; }
+    grep -q "## \[{{ VERSION }}\]" CHANGELOG.md || { echo "CHANGELOG.md has no {{ VERSION }} entry"; exit 1; }
+    git add Cargo.toml Cargo.lock python/pitchfork/__init__.py CHANGELOG.md
+    git commit -m "release {{ VERSION }}" || true
+    git tag "v{{ VERSION }}"
+    # Push from the current branch (this repo's default is master).
+    git push origin HEAD "v{{ VERSION }}"

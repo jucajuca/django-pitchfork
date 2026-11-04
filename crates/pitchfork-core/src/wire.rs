@@ -72,6 +72,10 @@ pub struct SearchRequestV1 {
     /// Geospatial filter (haystack `within` / `dwithin`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spatial: Option<SpatialFilterV1>,
+    /// Cap for the full-match-set facet scan (P0-5: facets are
+    /// page-independent; matches beyond this limit are flagged truncated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facet_scan_limit: Option<u64>,
     /// More-like-this: the source document id (uses /more_like_this instead).
     #[serde(default)]
     pub mlt_doc_id: Option<String>,
@@ -172,6 +176,10 @@ pub struct SearchResponseV1 {
     pub hits: Vec<Hit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facets: Option<FacetCounts>,
+    /// True when the facet scan hit the client's `facet_scan_limit` and the
+    /// counts only cover a prefix of the match set (P0-5).
+    #[serde(default)]
+    pub facets_truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spelling: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,10 +190,15 @@ impl SearchResponseV1 {
     pub fn hits(total: i64, hits: Vec<Hit>) -> SearchResponseV1 {
         SearchResponseV1 {
             v: WIRE_VERSION,
-            kind: if hits.is_empty() { KIND_EMPTY } else { KIND_HITS },
+            kind: if hits.is_empty() {
+                KIND_EMPTY
+            } else {
+                KIND_HITS
+            },
             total,
             hits,
             facets: None,
+            facets_truncated: false,
             spelling: None,
             error: None,
         }
@@ -202,6 +215,7 @@ impl SearchResponseV1 {
             total: 0,
             hits: Vec::new(),
             facets: None,
+            facets_truncated: false,
             spelling: None,
             error: Some(message.into()),
         }
@@ -252,8 +266,8 @@ pub struct HealthResponseV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{FieldDef, FieldType, PitchforkSchema};
     use crate::query_ast::FilterOp;
+    use crate::schema::{FieldDef, FieldType, PitchforkSchema};
 
     #[test]
     fn wire_version_matches_plan() {
@@ -274,6 +288,7 @@ mod tests {
             spellcheck: true,
             spelling_query: Some("indxed".into()),
             spatial: None,
+            facet_scan_limit: None,
             mlt_doc_id: None,
         };
         let json = serde_json::to_string(&req).unwrap();
@@ -308,7 +323,10 @@ mod tests {
     fn index_request_carries_schema() {
         let mut doc = BTreeMap::new();
         doc.insert("id".to_string(), WireValue::Str("core.mockmodel.1".into()));
-        doc.insert("django_ct".to_string(), WireValue::Str("core.mockmodel".into()));
+        doc.insert(
+            "django_ct".to_string(),
+            WireValue::Str("core.mockmodel".into()),
+        );
         doc.insert("django_id".to_string(), WireValue::Str("1".into()));
         doc.insert("text".to_string(), WireValue::Str("hello world".into()));
 

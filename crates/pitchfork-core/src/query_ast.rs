@@ -86,9 +86,15 @@ pub enum QueryNode {
     MatchAll,
     /// Match no documents.
     MatchNone,
-    And { children: Vec<QueryNode> },
-    Or { children: Vec<QueryNode> },
-    Not { child: Box<QueryNode> },
+    And {
+        children: Vec<QueryNode>,
+    },
+    Or {
+        children: Vec<QueryNode>,
+    },
+    Not {
+        child: Box<QueryNode>,
+    },
     Filter {
         field: String,
         op: FilterOp,
@@ -132,20 +138,33 @@ impl QueryNode {
     }
 }
 
-fn validate_value(ty: FieldType, op: FilterOp, value: &WireValue, field: &str) -> Result<(), String> {
+fn validate_value(
+    ty: FieldType,
+    op: FilterOp,
+    value: &WireValue,
+    field: &str,
+) -> Result<(), String> {
     use WireValue::*;
     match ty {
         FieldType::Integer => matches_number(value, op, field),
         FieldType::Float => matches_number(value, op, field),
         FieldType::Boolean => {
-            if matches!(value, Bool(_)) {
-                Ok(())
-            } else {
-                Err(format!("filter on boolean field '{field}' requires a boolean value"))
+            // `Bool` natively, or a string haystack would have stringified
+            // (`str(True)` -> "True"); the engine's `value_truthy` coerces
+            // both. Anything else is a genuine type error.
+            match value {
+                Bool(_) => Ok(()),
+                Str(s) if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") => Ok(()),
+                Int(n) if *n == 0 || *n == 1 => Ok(()),
+                _ => Err(format!(
+                    "filter on boolean field '{field}' requires a boolean or 0/1/'true'/'false' value"
+                )),
             }
         }
         FieldType::Date | FieldType::DateTime => {
-            if matches!(value, Str(_)) || (matches!(op, FilterOp::In | FilterOp::Range) && matches!(value, List(_))) {
+            if matches!(value, Str(_))
+                || (matches!(op, FilterOp::In | FilterOp::Range) && matches!(value, List(_)))
+            {
                 Ok(())
             } else {
                 Err(format!(
@@ -153,13 +172,30 @@ fn validate_value(ty: FieldType, op: FilterOp, value: &WireValue, field: &str) -
                 ))
             }
         }
-        FieldType::Text | FieldType::Char | FieldType::Ngram | FieldType::EdgeNgram | FieldType::Location => Ok(()),
+        FieldType::Text
+        | FieldType::Char
+        | FieldType::Ngram
+        | FieldType::EdgeNgram
+        | FieldType::Location => Ok(()),
     }
 }
 
 fn matches_number(value: &WireValue, op: FilterOp, field: &str) -> Result<(), String> {
     match value {
         WireValue::Int(_) | WireValue::Float(_) => Ok(()),
+        // Haystack stringifies filter values into its query fragments
+        // (`"%s" % value`), so bare lookups on numeric fields legitimately
+        // arrive as numeric strings; the engine coerces them. Only strings
+        // that do not *parse* as a number are rejected.
+        WireValue::Str(s) => {
+            if s.trim().parse::<f64>().is_ok() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "filter on numeric field '{field}' requires a numeric value (got '{s}')"
+                ))
+            }
+        }
         WireValue::List(_) if matches!(op, FilterOp::In | FilterOp::Range) => Ok(()),
         _ => Err(format!(
             "filter on numeric field '{field}' requires a numeric value"
@@ -193,8 +229,16 @@ mod tests {
                     },
                 ],
             },
-            QueryNode::filter("title", FilterOp::In, WireValue::List(vec![WireValue::Str("a".into()), WireValue::Str("b".into())])),
-            QueryNode::filter("views", FilterOp::Range, WireValue::List(vec![WireValue::Int(1), WireValue::Int(5)])),
+            QueryNode::filter(
+                "title",
+                FilterOp::In,
+                WireValue::List(vec![WireValue::Str("a".into()), WireValue::Str("b".into())]),
+            ),
+            QueryNode::filter(
+                "views",
+                FilterOp::Range,
+                WireValue::List(vec![WireValue::Int(1), WireValue::Int(5)]),
+            ),
             QueryNode::filter("text", FilterOp::Fuzzy, WireValue::Str("helo".into())),
         ];
 
@@ -208,8 +252,18 @@ mod tests {
     #[test]
     fn lookup_parsing() {
         for lookup in [
-            "exact", "contains", "startswith", "endswith", "gt", "gte", "lt", "lte", "in",
-            "range", "fuzzy", "content",
+            "exact",
+            "contains",
+            "startswith",
+            "endswith",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "in",
+            "range",
+            "fuzzy",
+            "content",
         ] {
             assert!(FilterOp::from_lookup(lookup).is_some(), "missing {lookup}");
         }
@@ -218,19 +272,23 @@ mod tests {
 
     #[test]
     fn validation_rejects_unknown_fields() {
-        let schema = PitchforkSchema::new(vec![crate::schema::FieldDef::new(
-            "title",
-            FieldType::Char,
-        )]);
-        assert!(QueryNode::filter("nope", FilterOp::Exact, WireValue::Str("x".into()))
-            .validate(&schema)
-            .is_err());
-        assert!(QueryNode::filter("title", FilterOp::Exact, WireValue::Str("x".into()))
-            .validate(&schema)
-            .is_ok());
-        assert!(QueryNode::filter("views", FilterOp::Exact, WireValue::Str("x".into()))
-            .validate(&schema)
-            .is_err());
+        let schema =
+            PitchforkSchema::new(vec![crate::schema::FieldDef::new("title", FieldType::Char)]);
+        assert!(
+            QueryNode::filter("nope", FilterOp::Exact, WireValue::Str("x".into()))
+                .validate(&schema)
+                .is_err()
+        );
+        assert!(
+            QueryNode::filter("title", FilterOp::Exact, WireValue::Str("x".into()))
+                .validate(&schema)
+                .is_ok()
+        );
+        assert!(
+            QueryNode::filter("views", FilterOp::Exact, WireValue::Str("x".into()))
+                .validate(&schema)
+                .is_err()
+        );
     }
 }
 
@@ -280,8 +338,10 @@ mod proptests {
     fn arb_node() -> impl Strategy<Value = QueryNode> {
         prop_oneof![
             arb_filter(),
-            prop::collection::vec(arb_filter(), 1..4).prop_map(|children| QueryNode::And { children }),
-            prop::collection::vec(arb_filter(), 1..4).prop_map(|children| QueryNode::Or { children }),
+            prop::collection::vec(arb_filter(), 1..4)
+                .prop_map(|children| QueryNode::And { children }),
+            prop::collection::vec(arb_filter(), 1..4)
+                .prop_map(|children| QueryNode::Or { children }),
             arb_filter().prop_map(|f| QueryNode::Not { child: Box::new(f) }),
             prop::collection::vec(arb_filter(), 1..3).prop_map(|children| QueryNode::And {
                 children: children

@@ -110,6 +110,8 @@ class PitchforkEmbeddedBackend(ResultProcessingMixin, BaseSearchBackend):
             "facets": facets or [],
             "highlight": bool(highlight),
             "spellcheck": bool(spellcheck),
+            # P0-5: full-match-set facet scan cap (page-independent counts).
+            "facet_scan_limit": adapter_base.FACET_SCAN_LIMIT,
         }
 
     # ------------------------------------------------------------------
@@ -184,7 +186,8 @@ class PitchforkEmbeddedBackend(ResultProcessingMixin, BaseSearchBackend):
                 stacklevel=2,
             )
 
-        ack = json.loads(self.engine.clear())
+        clear_req = {"v": wire_v1.WIRE_VERSION, "schema_fp": self.schema_fp}
+        ack = json.loads(self.engine.clear(json.dumps(clear_req)))
         if ack.get("ok") is not True:
             raise PitchforkError(f"embedded clear failed: {ack.get('error')}")
 
@@ -221,6 +224,34 @@ class PitchforkEmbeddedBackend(ResultProcessingMixin, BaseSearchBackend):
         **kwargs,
     ):
         self._require_setup()
+
+        if distance_point is not None:
+            # P1-2: accepted-but-ignored features must be loud. V1 has no
+            # distance annotation support (see MIGRATION.md).
+            warnings.warn(
+                "Pitchfork does not compute distances yet; `distance_point` "
+                "is ignored and results carry no `_distance` annotation.",
+                Warning,
+                stacklevel=2,
+            )
+
+        if date_facets:
+            # Accepted-and-ignored features must be loud (V1 has no
+            # date-facet IR op; phase 5+ work).
+            warnings.warn(
+                "Pitchfork does not support date facets yet; "
+                "`date_facets` is ignored.",
+                Warning,
+                stacklevel=2,
+            )
+
+        if query_facets:
+            warnings.warn(
+                "Pitchfork does not support query facets yet; "
+                "`query_facets` is ignored.",
+                Warning,
+                stacklevel=2,
+            )
 
         if not query_string:
             return {"results": [], "hits": 0}

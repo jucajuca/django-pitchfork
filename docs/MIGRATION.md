@@ -62,6 +62,15 @@ way the other backends do; no schema file to port. The compiled schema is
 fingerprinted — a stale server (schema fingerprint mismatch) is a hard error,
 never a silent rebuild.
 
+> **Rebuild required when upgrading to 0.2.** The compiled Tantivy schema now
+> declares text/char/ngram fields as *fast fields* (sorting on them used to
+> return a hard error), and `__contains` semantics changed from exact-term
+> to substring matching. Both are schema/behaviour changes baked into the
+> on-disk index layout: an index written by 0.1 must be rebuilt with
+> `rebuild_index` after upgrading, or sorting/faceting on text fields keeps
+> failing. A fingerprint mismatch (different schema compile) will tell you
+> loudly if you forget.
+
 ## 4. What carries over unchanged
 
 Everything in the haystack query API:
@@ -73,6 +82,16 @@ Everything in the haystack query API:
 
 Result objects (`SearchResult`) expose the same fields; `highlight`ing and
 faceting are computed by the Rust core.
+
+Two features are accepted but not implemented, and both now **warn** instead
+of failing silently:
+
+- **`boost`** (`SearchQuerySet.boost(...)` / `Index` field boosts): Pitchfork
+  V1 has no term-boost IR op, so relevance is unaffected. Every
+  `boost(...)` call emits a `Warning`.
+- **`distance_point`** (the `set_distance_field`/`distance` annotation):
+  V1 does not annotate results with `_distance`, so distance sorting/
+  annotation does not happen. Requests that ask for it emit a `Warning`.
 
 ## 5. Per-backend notes
 

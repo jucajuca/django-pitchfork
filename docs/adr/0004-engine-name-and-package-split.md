@@ -13,11 +13,12 @@ django-pitchfork     future: the haystack-replacement API, built on pitchfork
 
 ## Context
 
-ADR 0002 assumed the opposite split: `django-pitchfork` = the released native
-engine, `pitchfork` = the not-yet-built replacement. That naming was never
-shipped — the repo was renamed before its first release (no git tags; the
-names are unclaimed on PyPI and crates.io), so the dichotomy cost nothing to
-invert.
+An earlier ADR (0002, since removed — its split was never shipped and is
+inverted by this one) assumed the opposite arrangement: `django-pitchfork` =
+the released native engine, `pitchfork` = the not-yet-built replacement. That
+naming was never published — the repo was renamed before its first release (no
+git tags; the names were unclaimed on PyPI and crates.io), so the dichotomy
+cost nothing to invert.
 
 Two facts forced the final naming:
 
@@ -33,9 +34,10 @@ Two facts forced the final naming:
 
 ## Considered Options
 
-- **Keep ADR 0002's split (engine = `django-pitchfork`)**: rejected — the
-  engine is the part that changes least and has no Django dependency; naming
-  it after Django misleads and blocks use from non-Django callers.
+- **Keep the earlier two-package split (engine = `django-pitchfork`)**:
+  rejected — the engine is the part that changes least and has no Django
+  dependency; naming it after Django misleads and blocks use from non-Django
+  callers.
 - **Invert the arrow (API = `pitchfork`, engine = `pitchfork.engine`)**: kept
   as the *structural* model — the volatile Django layer sits on top — but not
   as a single distribution. See the naming decision below.
@@ -59,10 +61,13 @@ Two facts forced the final naming:
 - The wire protocol, `pitchfork-server` binary, and the `pitchfork-core` /
   `pitchfork-engine` / `pitchfork-server` crates need no change: they were
   already named after the engine.
-- ADR 0002's constraint "ENGINE paths must stay stable for existing adopters"
-  is void — nothing had been published under the old paths. The old engine
-  module path `django_pitchfork.backends.*` is not aliased.
-- The replacement API's base-class dependency (which ADR 0002 addressed) must
-  be re-decided when that package starts: it will consume
-  `pitchfork.backends.base` rather than duplicating haystack's
-  `BaseSearchQuery` machinery.
+- The earlier split's constraint "ENGINE paths must stay stable for existing
+  adopters" is void — nothing had been published under the old paths. The old
+  engine module path `django_pitchfork.backends.*` is not aliased.
+- The replacement API's base-class dependency must be decided when that package
+  starts: it consumes `pitchfork.backends.base` rather than duplicating
+  haystack's `BaseSearchQuery` machinery. The engine must not require haystack
+  at runtime once that happens — dropping that dependency is Phase 1 of the
+  haystack-replacement plan, and it is harder than a mechanical import swap
+  because result construction currently reads haystack's live `UnifiedIndex`
+  (see `pitchfork-engine-defect-fixes.md`, P1-6).

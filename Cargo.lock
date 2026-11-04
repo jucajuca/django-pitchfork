@@ -886,7 +886,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pitchfork"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pitchfork-core",
  "pitchfork-engine",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "pitchfork-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "serde",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "pitchfork-engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pitchfork-core",
  "serde",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "pitchfork-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "http-body-util",

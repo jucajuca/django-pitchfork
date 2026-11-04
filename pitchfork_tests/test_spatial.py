@@ -8,6 +8,7 @@ attribute (GeoDjango's ``D(km=...)`` is not needed here).
 
 from django.test.utils import override_settings
 from haystack import connections, indexes
+from haystack.query import SearchQuerySet
 from haystack.utils.loading import UnifiedIndex
 from test_haystack.core.models import MockModel
 

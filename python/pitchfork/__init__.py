@@ -7,6 +7,6 @@ PyO3 extension). `pitchfork.backends.embedded.AutoEngine` picks between them.
 The haystack-replacement API is a separate, future package: `django-pitchfork`.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 default_app_config = None  # no Django app config needed; this is a backend package

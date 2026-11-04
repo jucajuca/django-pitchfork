@@ -17,8 +17,8 @@ Rename the engine shipped by this repo from **`django-pitchfork`** to
 haystack-replacement API package.
 
 This inverts the naming in `docs/adr/0002-two-packages-inverted-dependency.md`
-(which today calls the engine `django-pitchfork` and the replacement
-`pitchfork`). New dependency arrow, which is the natural one:
+(now **deleted** — see the note at the end of this section). New dependency
+arrow, which is the natural one:
 
 ```
 pitchfork-engine               this repo (import: pitchfork) —
@@ -29,9 +29,20 @@ django-pitchfork               future project: haystack-replacement API
 ```
 
 Related:
-- `docs/adr/0002-two-packages-inverted-dependency.md` — the design being superseded.
+- `docs/adr/0004-engine-name-and-package-split.md` — the ADR that superseded
+  ADR 0002 (Phase 4 of this plan produced it).
 - `.opencode/plans/haystack-replacement-plan.md` — the roadmap whose naming
   this plan flips (see Phase 4).
+
+> **Post-completion note.** This plan recorded ADR 0002 as "superseded by
+> 0004, body preserved" (an append-only ADR convention). That step was
+> later revised: ADR 0002 described a two-package split that was **never
+> shipped** — no git tags, no PyPI release, no crates.io release — and ADR
+> 0004 explicitly voids its only surviving constraint. Keeping a superseded
+> ADR whose every decision is either void or inverted adds a misleading
+> alternative to readers without preserving any live rationale, so the file was
+> removed and its (brief) history folded into ADR 0004's Context section.
+> ADR 0001, 0003 and 0004 remain.
 
 ## Naming decisions
 
@@ -218,8 +229,11 @@ unzip -p dist/*.whl '*/METADATA' | head -5   # Name: pitchfork-engine
      and `django-pitchfork` imports them.* That is a change from ADR 0002's
      direction and must be re-verified as an ADR risk (who owns
      `BaseSearchQuery`).
-2. **`docs/adr/0002-…md`**: add a `> Superseded by 0004` banner; do not
-   rewrite the body (ADRs are append-only).
+2. **`docs/adr/0002-…md`**: ~~add a `> Superseded by 0004` banner; do not
+   rewrite the body (ADRs are append-only)~~ — **revised at completion**: the
+   file was deleted instead, since its split was never shipped and ADR 0004
+   voids its one live constraint. See the post-completion note at the top of
+   this plan.
 3. **`GLOSSARY.md`**: replace the two package terms with:
    - **Pitchfork (package)** — this repo: Rust/Tantivy engine, wire codec,
      haystack backends. Import `pitchfork`.
@@ -305,13 +319,14 @@ flip) and `git remote set-url`.
 ## Definition of done
 
 - [ ] `rg -n 'django[_-]pitchfork'` in-tree returns only intentional
-      future-package mentions (GLOSSARY, ADR 0002 banner/0004, roadmap plan).
+      future-package mentions (GLOSSARY, ADR 0004, roadmap plan).
 - [ ] `just clippy`, `just test-rs`, `just test-py` (server **and** embedded)
       green; `python3 scripts/check_support_matrix.py` green.
 - [ ] `import pitchfork`, `pitchfork._core`, and all three
       `pitchfork.backends.*` ENGINE paths resolve; `django_pitchfork` does not.
 - [ ] Built wheel is `pitchfork_engine-0.1.0-*.whl` with top-level
       `pitchfork/` and `METADATA: Name: pitchfork-engine` (D1).
-- [ ] ADR 0004 merged, ADR 0002 bannered, GLOSSARY rewritten, roadmap plan
-      re-named, README/MIGRATION install lines correct.
+- [ ] ADR 0004 merged, ADR 0002 resolved (deleted; history folded into 0004),
+      GLOSSARY rewritten, roadmap plan re-named, README/MIGRATION install
+      lines correct.
 - [ ] Old repo name freed / new names registered (D2).
