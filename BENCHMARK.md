@@ -1,6 +1,6 @@
 # BENCHMARK
 
-Benchmark artifacts for django-pitchfork. Bolt's lesson applied: measure
+Benchmark artifacts for pitchfork. Bolt's lesson applied: measure
 before adding features, write the numbers down.
 
 ## Embedded vs server (Strategy B vs Strategy C)

@@ -1,21 +1,22 @@
-# django-pitchfork
+# pitchfork
 
-Rust-powered search for Django, and a complete replacement for
-django-haystack. The `pitchfork` package exposes the search API; backends
-range from the Rust-native Tantivy core to external engines (Solr,
-Elasticsearch, Whoosh, Xapian).
+Rust-powered search engine for Django, and the native half of a complete
+replacement for django-haystack. This repo's `pitchfork` package ships the
+Rust-native Tantivy engine; the Django-facing replacement API will be a
+separate package, `django-pitchfork`, built on top of it.
 
 ## Language
 
 **Pitchfork (package)**:
-The haystack-replacement package exposing the search API, backends, and
-template tags.
-_Avoid_: django-pitchfork (that is the other package), the library
+This repo: the Rust-native engine bindings, wire codec, and the haystack
+backend adapters. Import name `pitchfork`; distribution `pitchfork-engine`.
+_Avoid_: django-pitchfork (that is the future replacement API, not this repo)
 
 **django-pitchfork (package)**:
-The released package containing the Rust-native engine bindings and wire
-codec, wrapped by the pitchfork package.
-_Avoid_: pitchfork (ambiguous with the replacement package)
+The planned haystack-replacement package (search API, `SearchQuerySet`,
+template tags, forms, views) that depends on `pitchfork`. Not built in this
+repo.
+_Avoid_: pitchfork (unqualified — ambiguous with this engine package)
 
 **Native backend**:
 The Rust/Tantivy engine that pitchfork ships itself, as opposed to adapters

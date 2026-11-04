@@ -1,6 +1,6 @@
 """Strategy B: embed the same Rust core in-process via PyO3.
 
-`django_pitchfork._core` wraps pitchfork-core + pitchfork-engine compiled
+`pitchfork._core` wraps pitchfork-core + pitchfork-engine compiled
 into the Python process. Every engine call releases the GIL (py.allow_threads
 in the Rust module), and the wire types are identical to server mode — the
 protocol contract cannot drift.
@@ -26,7 +26,7 @@ from .base import encode_wire_value
 from .server import PitchforkSearchQuery, ResultProcessingMixin
 
 try:
-    from django_pitchfork import _core
+    from pitchfork import _core
 
     HAS_CORE = True
 except ImportError:  # pragma: no cover - the module is optional by design
@@ -75,7 +75,7 @@ class PitchforkEmbeddedBackend(ResultProcessingMixin, BaseSearchBackend):
 
         if not HAS_CORE:
             raise ImproperlyConfigured(
-                "django_pitchfork._core is not compiled. Build the Rust "
+                "pitchfork._core is not compiled. Build the Rust "
                 "extension with `maturin develop` (or `just build`) to use "
                 "embedded mode."
             )

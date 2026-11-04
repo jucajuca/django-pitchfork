@@ -1,4 +1,4 @@
-"""Test runner for django-pitchfork, mirroring django-haystack's run_tests.py.
+"""Test runner for pitchfork, mirroring django-haystack's run_tests.py.
 
 Sets DJANGO_SETTINGS_MODULE=pitchfork_tests.settings and puts both repos on
 sys.path (django-haystack provides the test models/fixtures).
@@ -19,7 +19,7 @@ HAYSTACK_ROOT = os.environ.get(
 
 
 def make_parser():
-    parser = ArgumentParser(description="Run the django-pitchfork test suite.")
+    parser = ArgumentParser(description="Run the pitchfork test suite.")
     parser.add_argument(
         "labels",
         nargs="*",

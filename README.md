@@ -1,18 +1,30 @@
-# django-pitchfork
+# pitchfork
 
-Rust-powered search core for django-haystack. Name: **django-pitchfork**
-(the tool you work a haystack with).
+Rust-powered search engine for django-haystack. Name: **pitchfork** (the tool
+you work a haystack with).
+
+Install `pitchfork-engine`; import `pitchfork` — the PyPI name `pitchfork`
+belongs to an unrelated, abandoned project:
+
+```sh
+pip install pitchfork-engine
+```
+
+The Django-facing *haystack replacement* API is not this package; it will ship
+separately as `django-pitchfork` on top of this engine.
 
 Evolution path: **C → B** —
 
 - **Strategy C (shipped)**: a standalone Rust search server
   (`pitchfork-server`, Tantivy-backed, axum HTTP) with a Haystack backend
-  adapter (`django_pitchfork.backends.server.PitchforkEngine`). Unmodified
+  adapter (`pitchfork.backends.server.PitchforkEngine`). Unmodified
   django-haystack works over HTTP; switching
   `HAYSTACK_CONNECTIONS["default"]["ENGINE"]` from WhooshEngine to
   PitchforkEngine requires no other change.
-- **Strategy B (planned)**: embed the same Rust core in-process via PyO3
-  (`django_pitchfork._core`), GIL released during search and indexing.
+- **Strategy B (shipped)**: embed the same Rust core in-process via PyO3
+  (`pitchfork._core`), GIL released during search and indexing.
+  `pitchfork.backends.embedded.AutoEngine` picks this mode when the compiled
+  extension is importable, and falls back to server mode otherwise.
 
 ## Layout (layered bottom-up, no back-edges)
 
@@ -21,7 +33,7 @@ crates/
 ├── pitchfork-core/     # Layer 1: pure Rust — schema, query AST, wire protocol
 ├── pitchfork-engine/   # Layer 2: Tantivy-backed SearchEngine impl
 └── pitchfork-server/   # Layer 3: axum HTTP service (Strategy C)
-python/                 # django_pitchfork package (adapter + wire codec)
+python/                 # pitchfork package (adapter + wire codec)
 pitchfork_tests/        # Backend test suite (starts its own server fixture)
 ```
 
@@ -37,8 +49,18 @@ just clippy       # lint gate (-D warnings)
 Migrating an existing haystack project: see `docs/MIGRATION.md`.
 
 Wire protocol: **PitchforkWireV1** — one versioned contract; every
-cross-boundary type adds the Python constant (`django_pitchfork/wire.py`)
+cross-boundary type adds the Python constant (`pitchfork/wire.py`)
 and the Rust static (`pitchfork-core/src/wire.rs`) in the same commit.
+
+## Name map
+
+| Thing | Name |
+|---|---|
+| Import package | `pitchfork` |
+| PyPI distribution | `pitchfork-engine` (`pitchfork` on PyPI is an unrelated abandoned project) |
+| Native extension module | `pitchfork._core` (private) |
+| Rust crates / server binary | `pitchfork-core`, `pitchfork-engine`, `pitchfork-server` |
+| Future haystack-replacement API | `django-pitchfork` — a separate package, not this repo |
 
 ## Supported features
 

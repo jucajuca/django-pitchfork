@@ -59,7 +59,7 @@ TEST_PITCHFORK_DATA = os.environ.get(
 
 HAYSTACK_CONNECTIONS = {
     "default": {
-        "ENGINE": "django_pitchfork.backends.server.PitchforkEngine",
+        "ENGINE": "pitchfork.backends.server.PitchforkEngine",
         "URL": TEST_PITCHFORK_URL,
         "TIMEOUT": 30,
     },
@@ -71,7 +71,7 @@ HAYSTACK_CONNECTIONS = {
 # unified indexes in the test classes rebuild cleanly.
 if os.environ.get("PITCHFORK_MODE") == "embedded":
     HAYSTACK_CONNECTIONS["default"] = {
-        "ENGINE": "django_pitchfork.backends.embedded.PitchforkEmbeddedEngine",
+        "ENGINE": "pitchfork.backends.embedded.PitchforkEmbeddedEngine",
     }
 
 USE_TZ = False

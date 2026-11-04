@@ -6,8 +6,13 @@ classic backend (Whoosh, Solr, Elasticsearch) to `PitchforkEngine`.
 ## 1. Install
 
 ```sh
-pip install django-pitchfork
+pip install pitchfork-engine
 ```
+
+The distribution is `pitchfork-engine`; the import package is `pitchfork`.
+(`pitchfork` on PyPI is an unrelated, abandoned 2018 project.) This package is
+the **engine**; the haystack-replacement API ships separately as
+`django-pitchfork`.
 
 The package ships version-specific wheels (one per supported CPython —
 see `.github/workflows/release.yml`); there is no compiler requirement at
@@ -20,7 +25,7 @@ In `settings.py`, swap the `ENGINE` of each haystack connection:
 ```python
 HAYSTACK_CONNECTIONS = {
     "default": {
-        "ENGINE": "django_pitchfork.backends.embedded.AutoEngine",
+        "ENGINE": "pitchfork.backends.embedded.AutoEngine",
         "PATH": os.path.join(BASE_DIR, "search-index"),
     },
 }
@@ -32,15 +37,15 @@ HAYSTACK_SIGNAL_PROCESSOR = (
 
 Embedded (in-process Rust) vs server (separate pitchfork-server process) is
 selected automatically by `AutoEngine`: if the compiled
-`django_pitchfork._core` extension imports, the embedded engine is used;
+`pitchfork._core` extension imports, the embedded engine is used;
 otherwise the adapter talks HTTP to a running `pitchfork-server`. To pin a
 mode explicitly:
 
 ```python
 # Force server mode (Strategy C):
-"ENGINE": "django_pitchfork.backends.server.PitchforkEngine",
+"ENGINE": "pitchfork.backends.server.PitchforkEngine",
 # Force embedded mode (Strategy B):
-"ENGINE": "django_pitchfork.backends.embedded.PitchforkEmbeddedEngine",
+"ENGINE": "pitchfork.backends.embedded.PitchforkEmbeddedEngine",
 ```
 
 Server mode needs the `pitchfork-server` binary running and reachable
@@ -97,7 +102,7 @@ The Python adapter and the Rust core talk **PitchforkWireV1** — one
 versioned wire protocol:
 
 - Every cross-boundary type exists as a Python constant
-  (`django_pitchfork/wire.py`) and a Rust static
+  (`pitchfork/wire.py`) and a Rust static
   (`pitchfork-core/src/wire.rs`), changed in the same commit.
 - Wire changes bump `WIRE_VERSION`; the adapter negotiates before the first
   request and fails loudly on a mismatch.

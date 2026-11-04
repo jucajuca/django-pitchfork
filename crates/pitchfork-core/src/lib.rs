@@ -1,4 +1,4 @@
-//! pitchfork-core: pure Rust core for django-pitchfork.
+//! pitchfork-core: pure Rust core for the pitchfork engine.
 //!
 //! Layer 1 of the workspace: schema, query AST and the versioned wire
 //! protocol. Zero I/O, zero PyO3, no network — this crate compiles and

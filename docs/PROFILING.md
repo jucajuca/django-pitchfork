@@ -1,6 +1,6 @@
 # PROFILING
 
-Methodology for measuring django-pitchfork. Bolt's lesson applied: measure
+Methodology for measuring pitchfork. Bolt's lesson applied: measure
 before adding features, write the numbers down (see `BENCHMARK.md`).
 
 ## What to measure

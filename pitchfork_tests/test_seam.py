@@ -3,8 +3,8 @@
 import json
 
 from django.test.utils import override_settings
-from django_pitchfork import wire as wire_v1
-from django_pitchfork.backends import base as adapter_base
+from pitchfork import wire as wire_v1
+from pitchfork.backends import base as adapter_base
 from pitchfork_tests.testcases import PitchforkTestCase
 
 
@@ -33,15 +33,15 @@ class AutoEngineSeamTestCase(PitchforkTestCase):
     """The C → B seam: embedded mode when the Rust module imports."""
 
     def test_seam_picks_embedded_when_compiled(self):
-        from django_pitchfork.backends.embedded import AutoEngine, HAS_CORE
+        from pitchfork.backends.embedded import AutoEngine, HAS_CORE
 
         engine = AutoEngine()
         if HAS_CORE:
-            from django_pitchfork.backends.embedded import PitchforkEmbeddedBackend
+            from pitchfork.backends.embedded import PitchforkEmbeddedBackend
 
             assert engine.backend is PitchforkEmbeddedBackend
         else:
-            from django_pitchfork.backends.server import PitchforkSearchBackend
+            from pitchfork.backends.server import PitchforkSearchBackend
 
             assert engine.backend is PitchforkSearchBackend
 

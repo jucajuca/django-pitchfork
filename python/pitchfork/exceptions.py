@@ -1,8 +1,8 @@
-"""Exceptions for django-pitchfork."""
+"""Exceptions for pitchfork."""
 
 
 class PitchforkError(Exception):
-    """Base error for django-pitchfork."""
+    """Base error for pitchfork."""
 
 
 class PitchforkServerError(PitchforkError):

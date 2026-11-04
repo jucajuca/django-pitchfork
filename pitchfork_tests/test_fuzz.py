@@ -9,8 +9,8 @@ import json
 
 from hypothesis import given, settings, strategies as st
 
-from django_pitchfork import wire as wire_v1
-from django_pitchfork.backends import base as adapter_base
+from pitchfork import wire as wire_v1
+from pitchfork.backends import base as adapter_base
 
 
 @st.composite

@@ -1,4 +1,4 @@
-# django-pitchfork task runner (bolt's justfile pattern: single entry point
+# pitchfork task runner (bolt's justfile pattern: single entry point
 # bridging cargo + Python).
 default:
     @just --list
@@ -53,7 +53,7 @@ release VERSION:
     #!/usr/bin/env bash
     set -euo pipefail
     sed -i '0,/^version = ".*"/s//version = "{{VERSION}}"/' Cargo.toml
-    cargo check -p django-pitchfork -q
+    cargo check -p pitchfork -q
     git add -A
     git commit -m "Release {{VERSION}}"
     git tag "v{{VERSION}}"

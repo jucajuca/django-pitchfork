@@ -6,4 +6,4 @@ __pycache__/
 *.egg-info/
 /pitchfork-data
 # Built PyO3 extension (maturin develop output).
-python/django_pitchfork/*.so
+python/pitchfork/*.so

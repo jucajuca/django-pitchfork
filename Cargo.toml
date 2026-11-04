@@ -36,13 +36,15 @@ debug = true
 
 # Root crate: the PyO3 extension module (Strategy B, phase 4).
 [package]
-name = "django-pitchfork"
+name = "pitchfork"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "django_pitchfork_core"
+# Distinct from crates/pitchfork-core's lib (`pitchfork_core`) so the two
+# never collide in the same build graph.
+name = "pitchfork_py"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

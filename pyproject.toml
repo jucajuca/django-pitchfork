@@ -3,8 +3,11 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "django-pitchfork"
-description = "Rust-powered search core for django-haystack."
+# PyPI name differs from the import name: `pitchfork` on PyPI belongs to an
+# unrelated, abandoned 2018 project. Install `pitchfork-engine`, then
+# `import pitchfork`.
+name = "pitchfork-engine"
+description = "Rust-powered search engine for django-haystack: native Tantivy backend, wire codec, embedded and server modes."
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
 requires-python = ">=3.10"
@@ -33,19 +36,19 @@ classifiers = [
 dynamic = ["version"]
 
 # Bolt's packaging lessons applied:
-# - the Rust module is `django_pitchfork._core` (private submodule);
+# - the Rust module is `pitchfork._core` (private submodule);
 # - extension-module is enabled only here via features, never hardcoded in
 #   Cargo.toml, so native `cargo test` can link libpython.
 [tool.maturin]
 python-source = "python"
-module-name = "django_pitchfork._core"
+module-name = "pitchfork._core"
 features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["pitchfork_tests"]
 
 [tool.coverage.run]
-source = ["python/django_pitchfork"]
+source = ["python/pitchfork"]
 branch = true
 # Python >= 3.14 forkserver: patch fork like bolt does.
 patch = ["fork"]
@@ -59,6 +62,6 @@ exclude_lines = [
 
 [tool.mutmut]
 # mutmut on the Python package (bolt's setup, phase 6).
-# Run: mutmut run --paths-to-mutate python/django_pitchfork
-paths_to_mutate = ["python/django_pitchfork/"]
+# Run: mutmut run --paths-to-mutate python/pitchfork
+paths_to_mutate = ["python/pitchfork/"]
 tests_dir = ["pitchfork_tests/"]

@@ -2,7 +2,7 @@
 //!
 //! Design rules (from the django-bolt lessons):
 //! - One versioned contract; every new cross-boundary type adds the Python
-//!   constant (`django_pitchfork/wire.py::WIRE_VERSION`) and this Rust static
+//!   constant (`pitchfork/wire.py::WIRE_VERSION`) and this Rust static
 //!   in the same commit.
 //! - Results use int body kinds (0 = hits, 1 = empty, 2 = error) so the Rust
 //!   side resolves to static structs without per-response string dispatch.
@@ -11,7 +11,7 @@ use crate::query_ast::QueryNode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Wire protocol version. Must match `django_pitchfork/wire.py::WIRE_VERSION`.
+/// Wire protocol version. Must match `pitchfork/wire.py::WIRE_VERSION`.
 pub const WIRE_VERSION: u32 = 1;
 
 /// A JSON value as it crosses the wire (document field values, facet
@@ -80,7 +80,7 @@ pub struct SearchRequestV1 {
 /// Geospatial filters (haystack `within` = bounding box, `dwithin` = radius).
 /// Points travel as "lat,lng" strings (haystack's LocationField format).
 ///
-/// Wire rule: the Python side (django_pitchfork/wire.py SPATIAL_*) and this
+/// Wire rule: the Python side (pitchfork/wire.py SPATIAL_*) and this
 /// Rust enum are changed in the same commit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -215,7 +215,7 @@ pub struct AckResponseV1 {
     pub ok: bool,
     /// Server-computed schema fingerprint, returned by /setup and /index so
     /// the adapter can echo it back in search requests without duplicating
-    /// the fingerprint algorithm. (Python side: `django_pitchfork/wire.py`.)
+    /// the fingerprint algorithm. (Python side: `pitchfork/wire.py`.)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_fp: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

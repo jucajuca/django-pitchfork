@@ -1,6 +1,6 @@
 [package]
 name = "pitchfork-core"
-description = "Pure Rust core for django-pitchfork: schema, query AST, wire protocol. No I/O, no PyO3."
+description = "Pure Rust core for the pitchfork engine: schema, query AST, wire protocol. No I/O, no PyO3."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -18,9 +18,9 @@ import django
 
 django.setup()
 
-from django_pitchfork.backends.base import PitchforkClient, build_schema_definition  # noqa: E402
+from pitchfork.backends.base import PitchforkClient, build_schema_definition  # noqa: E402
 from pitchfork_tests.testcases import PitchforkServerFixture  # noqa: E402
-from django_pitchfork import _core  # noqa: E402
+from pitchfork import _core  # noqa: E402
 
 N = 300
 
